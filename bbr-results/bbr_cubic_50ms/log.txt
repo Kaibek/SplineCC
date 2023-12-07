@@ -1,0 +1,10 @@
+QueueDisc: ns3::PfifoFastQueueDisc MaxSize: 129.489
+ErrorRate: 0
+RouterRate: 10Mbps RouterDelay: 40ms LeafRate: 100Mbps LeafDelay: 5ms
+nleaf: 2 startTime: 0 stopTime: 100
+Node: 2 TcpVariant: ns3::TcpBbr
+Node: 3 TcpVariant: ns3::TcpCubic
+Flow: 1 Throughtput: 4.9464
+Flow: 2 Throughtput: 4.54711
+Flow: 3 Throughtput: 0.103114
+Flow: 4 Throughtput: 0.0946144
