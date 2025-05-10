@@ -276,6 +276,58 @@ static inline u32 resolve_next_cwnd(sCC* state)
 }
 
 
-    state->next_cwnd = (state->inter_cwnd + (2 * (state->curr_cwnd) / state->d_initial)) - state->d_initial;
-    return state->next_cwnd;
+
+u32 SplineCC(u32 curr_cwnd, u32 curr_rtt, u32 throughput, sCC* state)
+{
+    find_cof_rtt(curr_rtt, state);
+    find_cof_cwnd(curr_cwnd, state);
+    find_cof_bw(throughput, state);
+    find_cof_a(state);
+    resolve_inter_cwnd(state);
+    resolve_next_cwnd(state);
+
+    return resolve_next_cwnd(state);
 }
+
+/*
+    sCC cc_state = { 0 };
+    sCC* tmp = &cc_state;
+    tmp->curr_rtt = 40;    // мкс
+    tmp->last_rtt = 50;    // мкс
+    tmp->last_cwnd = 10;   // сегменты
+    tmp->curr_cwnd = 50;   // сегменты
+
+    //Первый обхож параметров
+    u64 throughput = 1250000000; // 10 Гбит/с = 1.25e9 байт/с
+    tmp->last_max_cwnd = 120;
+    tmp->last_min_rtt = 100;
+ 
+
+    // Второй набор параметров
+    tmp->curr_rtt = 30;    // мкс
+    tmp->curr_cwnd = 49;   // сегменты
+    tmp->throughput = 1250000000; // 10 Гбит/с = 1.25e9 байт/с
+
+
+    // Третий набор параметров
+    tmp->curr_rtt = 120;    // мкс
+    tmp->curr_cwnd = 115;   // сегменты
+    tmp->throughput = 1250000000; // 10 Гбит/с = 1.25e9 байт/с
+
+
+
+    // Четвертый набор параметров
+    tmp->curr_rtt = 50;    // мкс
+    tmp->curr_cwnd = 14;   // сегменты
+    tmp->throughput = 1250000000; // 10 Гбит/с = 1.25e9 байт/с
+
+    
+Выводы:
+next_cwnd = 133
+
+next_cwnd = 115
+
+next_cwnd = 114
+
+next_cwnd = 13
+*/
