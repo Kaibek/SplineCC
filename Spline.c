@@ -21,7 +21,7 @@ typedef unsigned long long u64;
 
 // Структура для управления кубическим сплайном
 typedef struct SplineCC {
-    u32 last_rtt;           // Последний измеренный RTT (мкс)
+    u32 last_rtt;            // Последний измеренный RTT (мкс)
     u32 curr_rtt;           // Текущий RTT (мкс)
     u32 curr_cwnd;          // Текущее окно перегрузки (сегменты)
     u32 last_max_cwnd;
@@ -79,12 +79,10 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
     else
     {
         u64 ratio = (state->curr_rtt << 3) / state->last_rtt;
-
         ratio_u32 = (u32)ratio;
-        state->last_rtt = ratio_u32;
     }
 
-    u32 ratio_cubed = (ratio_u32 * ratio_u32 * ratio_u32) >> 2;
+    u32 ratio_cubed = (ratio_u32 * ratio_u32 * ratio_u32) >> 1;
     u32 loc_rtt;
 
     if (state->curr_rtt > state->last_rtt)
@@ -93,7 +91,7 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
         {
             state->d = 1;
             state->d_initial = state->d;
-            state->cached_ratio = 0;     // Сброс кэша при изменении логики
+            state->cached_ratio = 0; // Сброс кэша при изменении логики
             return state->d;
         }
 
@@ -106,14 +104,14 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
         {
             state->d = 1;
             state->d_initial = state->d;
-            state->cached_ratio = 0; 
+            state->cached_ratio = 0; // Сброс кэша при изменении min_rtt
 
             return state->d;
         }
 
 
-        loc_rtt = (ratio_cubed + (state->curr_rtt >> 1) + DIV3(state->curr_rtt)) / state->last_rtt;
-        state->cached_ratio = 0;
+        loc_rtt = (ratio_cubed + (state->curr_rtt >> 1) + DIV3(state->curr_rtt)) / state->curr_rtt;
+        state->cached_ratio = 0; // Сброс кэша при изменении min_rtt
     }
 
     else
@@ -126,9 +124,17 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
     }
 
     u32 result = loc_rtt + (loc_rtt >> 1);
+    
+    if (!loc_rtt)
+    {
+        printf("loc_rtt = %d", loc_rtt);
+        return 1;
+    }
 
     state->d = (ratio_u32 << 1) + ((result + loc_rtt) / loc_rtt);
     state->d_initial = state->d;
+    if (state->last_min_rtt >= state->curr_rtt) state->last_min_rtt = state->curr_rtt;
+
     state->last_rtt = state->curr_rtt;
 
     if (!state->d) return 1;
@@ -138,16 +144,17 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
 
 
 // Вычисление коэффициента c на основе cwnd
-static u32 find_cof_cwnd(u32 last_cwnd, u32 curr_cwnd, sCC* state)
+static u32 find_cof_cwnd(u32 curr_cwnd, sCC* state)
 {
-    if (!curr_cwnd || !last_cwnd || !state->last_rtt || !state->curr_rtt) return 1;
+    if (!curr_cwnd || !state->last_rtt || !state->curr_rtt) return 1;
 
     if (detect_fast_growth(state->last_rtt, state->curr_rtt))
         return curr_cwnd;
 
     if (!state->last_cwnd)
     {
-        state->last_cwnd = last_cwnd;
+        state->last_cwnd = state->curr_cwnd;
+        return state->c = 1;
     }
 
     if (detect_fast_growth(state->last_cwnd, state->curr_cwnd))
@@ -186,14 +193,20 @@ static u32 find_cof_cwnd(u32 last_cwnd, u32 curr_cwnd, sCC* state)
     }
 
     state->c = endl_cof_cwnd > state->curr_cwnd ? state->curr_cwnd : endl_cof_cwnd;
+    state->last_cwnd = state->curr_cwnd;
+
     return state->c;
 }
 
 
 // Вычисление коэффициента b на основе пропускной способности
-static u32 find_cof_bw(u64 tp, sCC* state) {
-    state->throughput_t = tp;
+static u32 find_cof_bw(u64 tp, sCC* state) 
+{
     if (!tp || !state->d_initial || !state->c) return 1;
+    if (state->throughput_t != tp)
+    {
+        state->throughput_t = tp;
+    }
 
     u32 c_d_initial = state->c + state->d_initial;
 
@@ -209,6 +222,7 @@ static u32 find_cof_bw(u64 tp, sCC* state) {
 
     state->b = DIVu64(state->throughput_t, state->throughput);
     if (!state->b) return 1;
+
     return state->b;
 }
 
@@ -235,19 +249,21 @@ static u32 inline resolve_inter_cwnd(sCC* state)
 static inline u32 resolve_next_cwnd(sCC* state)
 {
     if (state->d_initial == 0) return 1;
- 
-    if (state->curr_cwnd >= state->last_max_cwnd && state->last_min_rtt >= state->curr_rtt )
+
+    if (state->last_min_rtt >= state->curr_rtt)
     {
-        state->last_max_cwnd = state->curr_cwnd;
-        state->next_cwnd = state->curr_cwnd + state->d;
-        state->last_cwnd = state->next_cwnd;
 
-        state->last_min_rtt = state->curr_rtt;
+        if (state->curr_cwnd >= state->last_max_cwnd)
+        {
+            state->last_max_cwnd = state->curr_cwnd;
+            state->next_cwnd = state->curr_cwnd + state->d;
+            state->last_cwnd = state->next_cwnd;
 
-        return state->next_cwnd;
+            return state->next_cwnd;
+        }
     }
 
-    if (state->curr_cwnd - state->last_cwnd > 1 && (state->curr_rtt - state->last_min_rtt) > 5)
+    if ((state->curr_cwnd - state->last_cwnd) > 1 || (state->curr_rtt - state->last_min_rtt) > 5)
     {
         state->last_cwnd = state->curr_cwnd;
         state->next_cwnd = state->curr_cwnd - 1;
