@@ -2,27 +2,25 @@
 
 #define FIXED_SHIFT 10
 #define ERR_R 5                                           // Макс. погрешность RTT
-// для threshold (в разработке)
 #define THRESHOLD_PERCENT 120
 #define THRESHOLD_PERCENT_HIGH (THRESHOLD_PERCENT - 60)   // 60% порог
 #define THRESHOLD_PERCENT_LOW (THRESHOLD_PERCENT - 10)    // 110% порог          
-
 #define MULu64_FAST(x, y) ((x) * (y) >> FIXED_SHIFT)
-#define DIV3(x) (((x) * 171) >> 9)                              
+#define DIV3(x) (((x) * 171) >> 9) 
+#define DIV100(x) (((x) * 3) >> 8) 
 #define U32_MAX (~0U)               
 #define MAX_RTT 1000000                                   // 1 с в микросекундах
 #define MIN_RTT 10                                        // 10 мкс
-
+#define MSS 1460                                          // Максимальный размер сегмента (байт)
 
 typedef unsigned int u32;
 typedef unsigned long long u64;
 
-// Структура для управления кубическим сплайном
 typedef struct SplineCC {
     u32 last_rtt;           // Последний измеренный RTT (мкс)
     u32 curr_rtt;           // Текущий RTT (мкс)
     u32 curr_cwnd;          // Текущее окно перегрузки (сегменты)
-    u32 last_max_cwnd;      // максимальный cwnd
+    u32 last_max_cwnd;      // Максимальный cwnd
     u32 last_cwnd;          // Предыдущее окно перегрузки (сегменты)
     u64 throughput;         // Пропускная способность (байт/с)
     u64 throughput_t;       // Временная пропускная способность
@@ -31,13 +29,15 @@ typedef struct SplineCC {
     u32 full_cof;           // Сумма коэффициентов
     u32 inter_cwnd;         // Промежуточное окно перегрузки
     u32 next_cwnd;          // Следующее окно перегрузки
-    u32 cwnd_x, cwnd_y;     // составляющее для вычисления endl_cof_cwnd = (state->cwnd_x - state->cwnd_y) - state->d_initial
-    u64 b;                  // коэффициент для пропускной способности 
+    u32 cwnd_x, cwnd_y;     // Составляющие для вычисления endl_cof_cwnd
+    u64 b;                  // Коэффициент для пропускной способности 
     u32 cached_ratio;       // Кэшированное значение ratio
     u32 cached_last_rtt;    // Последнее min_rtt для кэширования
-    u32 last_min_rtt;       // самый минимальный RTT
+    u32 last_min_rtt;       // Самый минимальный RTT
     u64 cached_throughput;  // Кэшированное значение throughput_t
     u32 last_c_d_initial;   // Для проверки c + d_initial
+    u32 ssthresh;           // Порог для slow-start
+    u32 curr_ack;
 } sCC;
 
 
@@ -122,7 +122,7 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
     }
 
     u32 result = loc_rtt + (loc_rtt >> 1);
-    
+
     if (!loc_rtt)
     {
         printf("loc_rtt = %d", loc_rtt);
@@ -199,7 +199,7 @@ static u32 find_cof_cwnd(u32 curr_cwnd, sCC* state)
 
 
 // Вычисление коэффициента b на основе пропускной способности
-static u32 find_cof_bw(u64 tp, sCC* state) 
+static u32 find_cof_bw(u64 tp, sCC* state)
 {
     if (!tp || !state->d_initial || !state->c) return 1;
     if (state->throughput_t != tp)
@@ -234,6 +234,27 @@ static inline int find_cof_a(sCC* state)
 }
 
 
+static inline u32 handle_slow_start(sCC* state, u32 num_acks)
+{
+    if (state->curr_cwnd < state->ssthresh)
+    {
+        state->curr_cwnd += num_acks >> 1; 
+        state->next_cwnd = state->curr_cwnd;
+        state->last_cwnd = state->next_cwnd;
+        if (state->curr_cwnd > state->last_max_cwnd)
+        {
+            state->last_max_cwnd = state->curr_cwnd;
+        }
+        state->curr_ack = num_acks;
+        return state->next_cwnd;
+    }
+    state->curr_ack = num_acks;
+
+    return 0;
+}
+
+
+
 // Вычисление промежуточного cwnd
 static u32 inline resolve_inter_cwnd(sCC* state)
 {
@@ -249,10 +270,22 @@ static inline u32 resolve_next_cwnd(sCC* state)
 {
     if (state->d_initial == 0) return 1;
 
-    if (state->last_min_rtt >= state->curr_rtt)
+    if (state->last_rtt >= state->curr_rtt)
     {
+        if (state->curr_cwnd >= state->ssthresh)
+        {
+            state->last_max_cwnd = state->curr_cwnd;
+            u32 safe_d = state->d ? state->d : 1;
+            state->next_cwnd = state->b + state->curr_cwnd + state->curr_cwnd / safe_d;
 
-        if (state->curr_cwnd >= state->last_max_cwnd)
+            u32 max_cwnd = state->last_max_cwnd + (state->last_max_cwnd >> 3); // 12.5% лимит
+            if (state->next_cwnd > max_cwnd) state->next_cwnd = max_cwnd;
+
+            state->last_cwnd = state->next_cwnd;
+            return state->next_cwnd;
+        }
+
+        if (state->curr_cwnd >= state->last_max_cwnd && (state->curr_rtt - state->last_rtt) < ERR_R)
         {
             state->last_max_cwnd = state->curr_cwnd;
             state->next_cwnd = state->curr_cwnd + state->d;
@@ -262,72 +295,51 @@ static inline u32 resolve_next_cwnd(sCC* state)
         }
     }
 
-    if ((state->curr_cwnd - state->last_cwnd) > 1 || (state->curr_rtt - state->last_min_rtt) > ERR_R)
-    {
-        state->last_cwnd = state->curr_cwnd;
-        state->next_cwnd = state->curr_cwnd - 1;
-
-        return state->next_cwnd;
-    }
-
-
-    state->next_cwnd = (state->inter_cwnd + (2 * (state->curr_cwnd) / state->d_initial)) - state->d_initial;
+    state->next_cwnd = state->curr_ack + (state->inter_cwnd + (2 * (state->curr_cwnd) / state->d_initial)) - state->d_initial;
+    
     return state->next_cwnd;
 }
 
 
-
-u32 SplineCC(u32 curr_cwnd, u32 curr_rtt, u32 throughput, sCC* state)
+u32 SplineCC(u32 curr_cwnd, u32 curr_rtt, u32 throughput, u32 num_acks, sCC* state) 
 {
+    if (state->ssthresh == 0) 
+    {
+        state->ssthresh = DIV100(state->last_max_cwnd * THRESHOLD_PERCENT); 
+    }
+
+    // Гибридное ограничение ssthresh
+    u32 max_ssthresh = DIV100(state->last_max_cwnd * THRESHOLD_PERCENT); 
+
+    if ((curr_rtt > (state->last_min_rtt * 39) >> 5) && num_acks < 10)
+    {
+        // Высокий RTT и мало ACK — сеть загружена
+        state->ssthresh = (state->curr_cwnd * 12) >> 4; // 75% от текущего cwnd
+    }
+    else if (curr_rtt < state->last_min_rtt + ERR_R && num_acks > 20) 
+    {
+        // Низкий RTT и много ACK — сеть свободна, но ограничиваем рост
+        state->ssthresh = (state->ssthresh > max_ssthresh) ? max_ssthresh : state->ssthresh;
+    }
+    else 
+    {
+        // Промежуточное состояние, ограничиваем умеренно
+        state->ssthresh = (state->curr_cwnd + max_ssthresh) >> 1;
+    }
+
+    state->curr_cwnd = curr_cwnd;
     find_cof_rtt(curr_rtt, state);
+
+    u32 slow_start_cwnd = handle_slow_start(state, num_acks);
+
+    if (slow_start_cwnd) 
+    {
+        return slow_start_cwnd;
+    }
+
     find_cof_cwnd(curr_cwnd, state);
     find_cof_bw(throughput, state);
     find_cof_a(state);
     resolve_inter_cwnd(state);
-    resolve_next_cwnd(state);
-
     return resolve_next_cwnd(state);
 }
-
-/*
-    sCC cc_state = { 0 };
-    sCC* tmp = &cc_state;
-    tmp->curr_rtt = 40;    // мкс
-    tmp->last_rtt = 50;    // мкс
-    tmp->last_cwnd = 10;   // сегменты
-    tmp->curr_cwnd = 50;   // сегменты
-
-    //Первый обхож параметров
-    u64 throughput = 1250000000; // 10 Гбит/с = 1.25e9 байт/с
-    tmp->last_max_cwnd = 120;
-    tmp->last_min_rtt = 100;
- 
-
-    // Второй набор параметров
-    tmp->curr_rtt = 30;    // мкс
-    tmp->curr_cwnd = 49;   // сегменты
-    tmp->throughput = 1250000000; // 10 Гбит/с = 1.25e9 байт/с
-
-
-    // Третий набор параметров
-    tmp->curr_rtt = 120;    // мкс
-    tmp->curr_cwnd = 115;   // сегменты
-    tmp->throughput = 1250000000; // 10 Гбит/с = 1.25e9 байт/с
-
-
-
-    // Четвертый набор параметров
-    tmp->curr_rtt = 50;    // мкс
-    tmp->curr_cwnd = 14;   // сегменты
-    tmp->throughput = 1250000000; // 10 Гбит/с = 1.25e9 байт/с
-
-    
-Выводы:
-next_cwnd = 133
-
-next_cwnd = 115
-
-next_cwnd = 114
-
-next_cwnd = 13
-*/
