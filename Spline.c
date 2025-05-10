@@ -1,17 +1,15 @@
 #include <stdio.h>
 
 #define FIXED_SHIFT 10
-#define FIXED_ONE (1ULL << FIXED_SHIFT)
-
+#define ERR_R 5                                           // Макс. погрешность RTT
 // для threshold (в разработке)
 #define THRESHOLD_PERCENT 120
 #define THRESHOLD_PERCENT_HIGH (THRESHOLD_PERCENT - 60)   // 60% порог
 #define THRESHOLD_PERCENT_LOW (THRESHOLD_PERCENT - 10)    // 110% порог          
 
-#define MAX_RATIO (1ULL << 21)                            // Порог для предотвращения переполнения
 #define MULu64_FAST(x, y) ((x) * (y) >> FIXED_SHIFT)
-#define DIV3(x) (((x) * 171) >> 9)                        
-#define U32_MAX (~0U)
+#define DIV3(x) (((x) * 171) >> 9)                              
+#define U32_MAX (~0U)               
 #define MAX_RTT 1000000                                   // 1 с в микросекундах
 #define MIN_RTT 10                                        // 10 мкс
 
@@ -21,10 +19,10 @@ typedef unsigned long long u64;
 
 // Структура для управления кубическим сплайном
 typedef struct SplineCC {
-    u32 last_rtt;            // Последний измеренный RTT (мкс)
+    u32 last_rtt;           // Последний измеренный RTT (мкс)
     u32 curr_rtt;           // Текущий RTT (мкс)
     u32 curr_cwnd;          // Текущее окно перегрузки (сегменты)
-    u32 last_max_cwnd;
+    u32 last_max_cwnd;      // максимальный cwnd
     u32 last_cwnd;          // Предыдущее окно перегрузки (сегменты)
     u64 throughput;         // Пропускная способность (байт/с)
     u64 throughput_t;       // Временная пропускная способность
@@ -33,11 +31,11 @@ typedef struct SplineCC {
     u32 full_cof;           // Сумма коэффициентов
     u32 inter_cwnd;         // Промежуточное окно перегрузки
     u32 next_cwnd;          // Следующее окно перегрузки
-    u32 cwnd_x, cwnd_y;
-    u64 b;
+    u32 cwnd_x, cwnd_y;     // составляющее для вычисления endl_cof_cwnd = (state->cwnd_x - state->cwnd_y) - state->d_initial
+    u64 b;                  // коэффициент для пропускной способности 
     u32 cached_ratio;       // Кэшированное значение ratio
     u32 cached_last_rtt;    // Последнее min_rtt для кэширования
-    u32 last_min_rtt;
+    u32 last_min_rtt;       // самый минимальный RTT
     u64 cached_throughput;  // Кэшированное значение throughput_t
     u32 last_c_d_initial;   // Для проверки c + d_initial
 } sCC;
@@ -87,7 +85,7 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
 
     if (state->curr_rtt > state->last_rtt)
     {
-        if (state->curr_rtt < state->last_rtt + 5)
+        if (state->curr_rtt < state->last_rtt + ERR_R)
         {
             state->d = 1;
             state->d_initial = state->d;
@@ -100,17 +98,17 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
 
     else if (state->curr_rtt < state->last_rtt)
     {
-        if (state->curr_rtt + 5 > state->last_rtt)
+        if (state->curr_rtt + ERR_R > state->last_rtt)
         {
             state->d = 1;
             state->d_initial = state->d;
-            state->cached_ratio = 0; // Сброс кэша при изменении min_rtt
+            state->cached_ratio = 0;
 
             return state->d;
         }
 
 
-        loc_rtt = (ratio_cubed + (state->curr_rtt >> 1) + DIV3(state->curr_rtt)) / state->curr_rtt;
+        loc_rtt = (ratio_cubed + (state->curr_rtt >> 1) + DIVu64(DIV3(state->curr_rtt), state->curr_rtt));
         state->cached_ratio = 0; // Сброс кэша при изменении min_rtt
     }
 
@@ -133,6 +131,7 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
 
     state->d = (ratio_u32 << 1) + ((result + loc_rtt) / loc_rtt);
     state->d_initial = state->d;
+
     if (state->last_min_rtt >= state->curr_rtt) state->last_min_rtt = state->curr_rtt;
 
     state->last_rtt = state->curr_rtt;
@@ -263,13 +262,18 @@ static inline u32 resolve_next_cwnd(sCC* state)
         }
     }
 
-    if ((state->curr_cwnd - state->last_cwnd) > 1 || (state->curr_rtt - state->last_min_rtt) > 5)
+    if ((state->curr_cwnd - state->last_cwnd) > 1 || (state->curr_rtt - state->last_min_rtt) > ERR_R)
     {
         state->last_cwnd = state->curr_cwnd;
         state->next_cwnd = state->curr_cwnd - 1;
 
         return state->next_cwnd;
     }
+
+
+    state->next_cwnd = (state->inter_cwnd + (2 * (state->curr_cwnd) / state->d_initial)) - state->d_initial;
+    return state->next_cwnd;
+}
 
 
     state->next_cwnd = (state->inter_cwnd + (2 * (state->curr_cwnd) / state->d_initial)) - state->d_initial;
