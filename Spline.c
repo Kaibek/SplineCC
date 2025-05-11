@@ -308,10 +308,10 @@ static u32 ssthresh_comp(sCC* state)
     if (state->curr_rtt > (state->last_min_rtt * 39) >> 5 && state->curr_ack + 1 < state->last_ack)
         state->ssthresh = (state->curr_cwnd * 12) >> 4; // ~37 для curr_cwnd = 50
 
-    else if (state->next_cwnd > state->ssthresh || state->curr_rtt < state->last_min_rtt + ERR_R)
+    else if (state->next_cwnd > state->ssthresh && state->curr_rtt < state->last_min_rtt + ERR_R)
     {
-        state->max_ssthresh = (state->next_cwnd + state->max_ssthresh) >> 1; // Среднее (~90–100)
-        state->max_ssthresh = state->next_cwnd >> 1; // Умеренное увеличение
+        state->max_ssthresh = (state->max_ssthresh + state->next_cwnd) >> 1;
+        state->ssthresh = (state->max_ssthresh + state->ssthresh) >> 1;
     }
 
     // Ограничение при большом числе ACK
@@ -342,6 +342,9 @@ static inline u32 resolve_next_cwnd(sCC* state)
         }
 
         state->next_cwnd = state->inter_cwnd - (state->curr_cwnd / (state->d ? state->d : 1));
+        if (state->next_cwnd < 1)
+            state->next_cwnd = 1;
+
         state->last_max_cwnd = state->last_max_cwnd + (state->last_max_cwnd >> 2);
         state->last_cwnd = state->next_cwnd;
 
@@ -403,5 +406,7 @@ u32 SplineCC(u32 curr_cwnd, u32 curr_rtt, u64 throughput, u32 num_acks, sCC* sta
     find_cof_a(state);
     resolve_inter_cwnd(state);
 
+    return resolve_next_cwnd(state);
+}
     return resolve_next_cwnd(state);
 }
