@@ -219,7 +219,7 @@ static u32 find_cof_bw(u64 tp, sCC* state)
     return state->b;
 }
 
-static inline u32 handle_slow_start(sCC* state, u32 num_ack)
+static u32 handle_slow_start(sCC* state, u32 num_ack)
 {
     // Сохраняем предыдущее число ACK и обновляем текущее
     state->last_ack = state->curr_ack;
@@ -313,7 +313,7 @@ static u32 ssthresh_comp(sCC* state)
 
 
 // Вычисление следующего cwnd
-static inline u32 resolve_next_cwnd(sCC* state)
+static u32 resolve_next_cwnd(sCC* state)
 {
     // Проверяем, есть ли коэффициент d; если нет, возвращаем минимальное окно
     if (state->d == 0) return 1;
@@ -399,7 +399,7 @@ static void handle_dup_ack(sCC* state)
 }
 
 
-u32 SplineCC(u32 curr_cwnd, u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
+u32 inline SplineCC(u32 curr_cwnd, u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
 {
     state->curr_cwnd = curr_cwnd;
     state->curr_rtt = curr_rtt;
