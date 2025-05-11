@@ -408,5 +408,3 @@ u32 SplineCC(u32 curr_cwnd, u32 curr_rtt, u64 throughput, u32 num_acks, sCC* sta
 
     return resolve_next_cwnd(state);
 }
-    return resolve_next_cwnd(state);
-}
