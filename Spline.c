@@ -1,15 +1,14 @@
 #include <stdio.h>
 
 #define FIXED_SHIFT 10
-#define ERR_R 5                                           // Макс. погрешность RTT
 #define THRESHOLD_PERCENT 100        
-#define MULu64_FAST(x, y) ((x) * (y) >> FIXED_SHIFT)
+#define MULu64_FAST(x, y) ((x) * (y) >> FIXED_SHIFT)      
 #define DIV3(x) (((x) * 171) >> 9) 
 #define DIV100(x) (((x) * 3) >> 8) 
 #define U32_MAX (~0U)               
 #define MAX_RTT 1000000                                   // 1 с в микросекундах
 #define MIN_RTT 10                                        // 10 мкс                                        
-#define MAX_SSHTHRESH  1000
+#define MAX_SSHTHRESH  900000                             // 10Gbit/s = 856 184 (MSS)
 #define MULT0_9(x) ((x * 15) >> 4)
 
 typedef unsigned int u32;
@@ -46,6 +45,15 @@ static inline u64 DIVu64(u64 x, u64 y)
     return ((x << FIXED_SHIFT) / y) >> FIXED_SHIFT;
 }
 
+static inline u32 err_r(u32 curr_rtt, u32 last_rtt, u32 last_min_rtt) 
+{
+    u32 RTT_SOLV = (curr_rtt + (last_rtt ? last_rtt : last_min_rtt)) >> 1;
+    static u32 smoothed_err_r = 10; // Инициализация
+    smoothed_err_r = (smoothed_err_r * 3 + ((curr_rtt + RTT_SOLV) >> 1)) >> 2; // 0.75*старое + 0.25*новое
+
+    return smoothed_err_r < 10 ? 10 : smoothed_err_r;
+}
+
 
 // Проверка на быстрое увеличение аргументов
 static inline u32 detect_fast_growth(u32 min, u32 curr)
@@ -60,6 +68,7 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
 {
     if (!state->last_rtt || !curr_rtt || curr_rtt > MAX_RTT) return 1;
 
+    u32 ERR_R = err_r(state->curr_rtt, state->last_rtt, state->last_min_rtt);
     state->curr_rtt = curr_rtt;
 
     // Защита от некорректных значений
@@ -96,7 +105,7 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
     }
 
     else if (state->curr_rtt < state->last_rtt)
-    {
+    { 
         if (state->curr_rtt + ERR_R > state->last_rtt)
         {
             state->d = 1;
@@ -281,31 +290,31 @@ static u32 handle_slow_start(sCC* state, u32 num_ack)
 
 static u32 ssthresh_comp(sCC* state)
 {
-    if (!state->max_ssthresh)
-        state->max_ssthresh = DIV100(state->last_max_cwnd * THRESHOLD_PERCENT);
-
-    // Ограничиваем максимальный порог предельным значением
-    if (state->max_ssthresh > MAX_SSHTHRESH)
-        state->max_ssthresh = MAX_SSHTHRESH;
-
-    // Устанавливаем начальный порог как произведение max_ssthresh и коэффициента d
     if (!state->ssthresh)
-        state->ssthresh = state->max_ssthresh * state->d;
+        state->ssthresh = state->b + DIV100(state->last_max_cwnd * THRESHOLD_PERCENT);
+
+    // Ограничиваем начальный порог предельным значением
+    if (state->ssthresh > MAX_SSHTHRESH)
+        state->ssthresh = state->b + MAX_SSHTHRESH;
+
+    // Устанавливаем максимальный порог как произведение ssthresh и коэффициента d
+    if (!state->max_ssthresh)
+        state->max_ssthresh = state->ssthresh * state->d;
 
     // Адаптируем порог при перегрузке: высокий RTT и уменьшение числа ACK
     if (state->curr_rtt > (state->last_min_rtt * 39) >> 5 && state->curr_ack < state->last_ack)
-        state->ssthresh = state->curr_cwnd >> 1;
+        state->ssthresh = state->curr_cwnd;
 
     // Увеличиваем порог, если окно превышает текущий порог и RTT растёт
     else if (state->next_cwnd > state->ssthresh && state->curr_rtt > state->last_min_rtt)
     {
-        state->max_ssthresh = (state->max_ssthresh + state->next_cwnd) >> 1;
-        state->ssthresh = (state->max_ssthresh + state->ssthresh) >> 1;
+        state->ssthresh = state->ssthresh + state->next_cwnd;
+        state->max_ssthresh = (state->ssthresh + state->max_ssthresh);
     }
 
     // Ограничиваем порог максимальным значением при росте числа ACK
     if (state->curr_ack > state->last_ack && state->ssthresh > state->max_ssthresh)
-        state->ssthresh = state->max_ssthresh;
+        state->max_ssthresh = state->ssthresh;
 
     // Возвращаем обновлённый порог
     return state->ssthresh;
@@ -315,6 +324,8 @@ static u32 ssthresh_comp(sCC* state)
 // Вычисление следующего cwnd
 static u32 resolve_next_cwnd(sCC* state)
 {
+    u32 ERR_R = err_r(state->curr_rtt, state->last_rtt, state->last_min_rtt);
+
     // Проверяем, есть ли коэффициент d; если нет, возвращаем минимальное окно
     if (state->d == 0) return 1;
 
@@ -325,64 +336,75 @@ static u32 resolve_next_cwnd(sCC* state)
         if (state->curr_cwnd > state->last_max_cwnd)
             state->last_max_cwnd = state->curr_cwnd;
 
-        // Увеличиваем окно на основе d и прироста ACK
-        state->next_cwnd = state->curr_cwnd + (state->d ? state->d : 1) + ((state->curr_ack - state->last_ack) >> 1);
+
         // Гарантируем минимальное окно
         if (state->next_cwnd < 1)
             state->next_cwnd = 1;
 
-        // Если окно достигло порога, ограничиваем его и пересчитываем ssthresh
-        if (state->next_cwnd >= state->ssthresh)
-        {
-            state->ssthresh = ssthresh_comp(state);
-            state->next_cwnd = state->ssthresh;
-        }
-
         // Ограничиваем окно двойным значением максимального окна
         state->next_cwnd = (state->next_cwnd > state->last_max_cwnd << 1) ? state->last_max_cwnd << 1 : state->next_cwnd;
         // Синхронизируем последнее окно с новым значением
-        state->last_cwnd = state->next_cwnd;
+        state->last_cwnd = state->curr_cwnd;
         // Увеличиваем максимальное окно на четверть для постепенного роста
         state->last_max_cwnd = state->last_max_cwnd + (state->last_max_cwnd >> 2);
 
         return state->next_cwnd;
     }
 
-    // Реакция на перегрузку: RTT значительно вырос и число ACK уменьшилось
-    if (state->curr_rtt > state->last_rtt + ERR_R && state->curr_ack < state->last_ack)
+
+    //Если текущий и прошлый cwnd равны, то увеличиваем на основе коэффициента b
+    if (state->curr_cwnd == state->last_cwnd && state->last_rtt + ERR_R == state->curr_rtt)
     {
-        // Уменьшаем окно на 10% для предотвращения перегрузки
-        state->next_cwnd = (u32)MULT0_9((state->curr_cwnd));
-        // Обновляем последнее и максимальное окна
+        state->next_cwnd = state->curr_cwnd + DIV3(state->b);
+        state->last_cwnd = state->curr_cwnd;
+        state->last_max_cwnd = state->next_cwnd;
+
+        return state->next_cwnd;
+    }
+
+    // Реакция на перегрузку: RTT значительно вырос и число ACK уменьшилось
+    if (state->curr_rtt > state->last_rtt + ERR_R || state->curr_ack < state->last_ack)
+    {
         state->last_cwnd = state->next_cwnd;
+
+        // Если окно достигло порога, ограничиваем его и пересчитываем ssthresh
+        if (state->next_cwnd >= state->ssthresh)
+        {
+            state->next_cwnd = state->ssthresh;
+            state->ssthresh = ssthresh_comp(state);
+            state->last_cwnd = state->next_cwnd;
+
+            return state->next_cwnd;
+
+        }
+
+        // Уменьшаем окно для предотвращения перегрузки
+        u32 reduction_factor = state->b - (state->curr_rtt + state->last_rtt);
+        state->next_cwnd = (state->curr_cwnd * reduction_factor) / 10;
+        // Обновляем последнее и максимальное окна
         state->last_max_cwnd = state->next_cwnd;
 
         return state->next_cwnd;
     }
 
     // Стабильный рост при малом изменении RTT и большом текущем окне
-    if (state->curr_cwnd >= state->last_max_cwnd && (state->curr_rtt - state->last_rtt) < ERR_R)
+    if (state->curr_cwnd >= state->last_cwnd && (state->curr_rtt - state->last_rtt) < ERR_R)
     {
         // Обновляем максимальное окно
         state->last_max_cwnd = state->curr_cwnd;
         // Увеличиваем окно на d для плавного роста
-        state->next_cwnd = state->curr_cwnd + (state->d ? state->d : 1);
+        state->next_cwnd = state->curr_cwnd - ERR_R;
         // Синхронизируем последнее окно
         state->last_cwnd = state->next_cwnd;
-
-        // Ограничиваем окно двойным значением максимального окна
-        state->next_cwnd = (state->next_cwnd > state->last_max_cwnd << 1) ? state->last_max_cwnd << 1 : state->next_cwnd;
-
+   
         return state->next_cwnd;
     }
 
-    // По умолчанию: сохраняем текущее окно
-    state->next_cwnd = state->curr_cwnd;
     // Синхронизируем последнее окно
     state->last_cwnd = state->next_cwnd;
 
     // Применяем ограничение двойным максимальным окном
-    state->next_cwnd = (state->next_cwnd > state->last_max_cwnd << 1) ? state->last_max_cwnd << 1 : state->next_cwnd;
+    state->next_cwnd = DIV3(state->b) + ((state->next_cwnd > state->last_max_cwnd << 1) ? state->last_max_cwnd >> 1 : state->next_cwnd);
 
     return state->next_cwnd;
 }
@@ -392,7 +414,7 @@ static void handle_dup_ack(sCC* state)
 {
     state->ssthresh = state->curr_cwnd >> 1;
     state->curr_cwnd = state->ssthresh;
-    state->next_cwnd = state->ssthresh;
+    state->next_cwnd = DIV3(state->curr_cwnd);
 
     state->last_max_cwnd = state->curr_cwnd;
     state->curr_ack = 0;
