@@ -9,31 +9,6 @@
 #define MAX_RTT 1000000                                   // 1 с в микросекундах и 
 #define MIN_RTT 10                                        // 10 мкс                                      
 #define MAX_SSHTHRESH  900000                             // 10Gbit/s = 856 184 (MSS)
-#define DIV_MSS(x) ((x) * (2920 >> 1))
-
-typedef unsigned int u32;
-typedef unsigned long long u64;
-
-typedef struct SplineCC {
-    u32 last_rtt;           // Последний измеренный RTT (мкс)
-    u32 curr_rtt;           // Текущий RTT (мкс)
-    u32 curr_cwnd;          // Текущее окно перегрузки (сегменты)
-    u32 last_max_cwnd;      // Максимальный cwnd
-    u32 last_cwnd;          // Предыдущее окно перегрузки (сегменты)
-    u64 throughput;         // Пропускная способность (байт/с)
-    u64 throughput_t;       // Временная пропускная способность
-    u32 c, d;               // Коэффициенты кубического сплайна
-#include <stdio.h>
-
-#define FIXED_SHIFT 10
-#define THRESHOLD_PERCENT 100        
-#define MULu64_FAST(x, y) ((x) * (y) >> FIXED_SHIFT)      
-#define DIV3(x) (((x) * 171) >> 9) 
-#define DIV100(x) (((x) * 3) >> 8) 
-#define U32_MAX (~0U)               
-#define MAX_RTT 1000000                                   // 1 с в микросекундах и 
-#define MIN_RTT 10                                        // 10 мкс                                      
-#define MAX_SSHTHRESH  900000                             // 10Gbit/s = 856 184 (MSS)
 #define MSS(x) ((x) * (2920 >> 1))
 
 typedef unsigned int u32;
