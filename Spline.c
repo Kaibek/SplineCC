@@ -23,8 +23,32 @@ typedef struct SplineCC {
     u64 throughput;         // Пропускная способность (байт/с)
     u64 throughput_t;       // Временная пропускная способность
     u32 c, d;               // Коэффициенты кубического сплайна
+#include <stdio.h>
+
+#define FIXED_SHIFT 10
+#define THRESHOLD_PERCENT 100        
+#define MULu64_FAST(x, y) ((x) * (y) >> FIXED_SHIFT)      
+#define DIV3(x) (((x) * 171) >> 9) 
+#define DIV100(x) (((x) * 3) >> 8) 
+#define U32_MAX (~0U)               
+#define MAX_RTT 1000000                                   // 1 с в микросекундах и 
+#define MIN_RTT 10                                        // 10 мкс                                      
+#define MAX_SSHTHRESH  900000                             // 10Gbit/s = 856 184 (MSS)
+#define MSS(x) ((x) * (2920 >> 1))
+
+typedef unsigned int u32;
+typedef unsigned long long u64;
+
+typedef struct SplineCC {
+    u32 last_rtt;           // Последний измеренный RTT (мкс)
+    u32 curr_rtt;           // Текущий RTT (мкс)
+    u32 curr_cwnd;          // Текущее окно перегрузки (сегменты)
+    u32 last_max_cwnd;      // Максимальный cwnd
+    u32 last_cwnd;          // Предыдущее окно перегрузки (сегменты)
+    u64 throughput;         // Пропускная способность (байт/с)
+    u64 throughput_temp;    // Временная пропускная способность
+    u32 c, d;               // Коэффициенты кубического сплайна
     u64 b;                  // Коэффициент для пропускной способности
-    u32 d_initial;          // Начальное значение d из find_cof_rtt
     u32 full_cof;           // Сумма коэффициентов
     u32 next_cwnd;          // Следующее окно перегрузки
     u32 cwnd_x, cwnd_y;     // Составляющие для вычисления endl_cof_cwnd 
@@ -33,9 +57,9 @@ typedef struct SplineCC {
     u64 cached_throughput;  // Кэшированное значение throughput_t
     u32 last_c_d_initial;   // Для проверки c + d_initial
     u32 ssthresh;           // Порог для slow-start
-    u32 curr_ack;
-    u32 last_ack;
-    u32 max_ssthresh;
+    u32 curr_ack;           //
+    u32 last_ack;           //
+    u32 max_ssthresh;       //
     u32 target_cwnd;        // Целевое окно для справедливости (в сегментах)
 } sCC;
 
@@ -65,7 +89,7 @@ static inline u32 detect_fast_growth(u32 min, u32 curr)
 
 
 // Вычисление коэффициента d на основе RTT
-static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
+static u32 ratio_rtt(u32 curr_rtt, sCC* state)
 {
     if (!curr_rtt || curr_rtt > MAX_RTT) return 1;
 
@@ -82,19 +106,19 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
     }
 
     u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
-    u32 ratio_u32;
+    u32 ratio_u32_rtt;
 
     // Проверка кэша
     if (state->last_rtt == state->curr_rtt && state->cached_ratio != 0)
-        ratio_u32 = state->cached_ratio;
+        ratio_u32_rtt = state->cached_ratio;
 
     else
     {
         u64 ratio = (state->curr_rtt << 3) / state->last_rtt;
-        ratio_u32 = (u32)ratio;
+        ratio_u32_rtt = (u32)ratio;
     }
 
-    u32 ratio_cubed = (ratio_u32 * ratio_u32 * ratio_u32) >> 1;
+    u32 ratio_cubed_rtt = (ratio_u32_rtt * ratio_u32_rtt * ratio_u32_rtt) >> 1;
     u32 loc_rtt;
 
     if (state->curr_rtt > state->last_rtt)
@@ -102,13 +126,12 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
         if (state->curr_rtt < state->last_rtt + ERR_R)
         {
             state->d = 1;
-            state->d_initial = state->d;
             state->cached_ratio = 0; // Сброс кэша при изменении логики
 
             return state->d;
         }
 
-        loc_rtt = ratio_cubed + (state->curr_rtt >> 1);
+        loc_rtt = ratio_cubed_rtt + (state->curr_rtt >> 1);
     }
 
     else if (state->curr_rtt < state->last_rtt)
@@ -116,21 +139,19 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
         if (state->curr_rtt + ERR_R > state->last_rtt)
         {
             state->d = 1;
-            state->d_initial = state->d;
             state->cached_ratio = 0;
 
             return state->d;
         }
 
 
-        loc_rtt = (ratio_cubed + (state->curr_rtt >> 1) + DIVu64(DIV3(state->curr_rtt), state->curr_rtt));
+        loc_rtt = (ratio_cubed_rtt + (state->curr_rtt >> 1) + DIVu64(DIV3(state->curr_rtt), state->curr_rtt));
         state->cached_ratio = 0; // Сброс кэша при изменении min_rtt
     }
 
     else
     {
         state->d = 1;
-        state->d_initial = state->d;
         state->cached_ratio = 0; // Сброс кэша при изменении логики
 
         return state->d;
@@ -143,8 +164,7 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
         return 0;
     }
 
-    state->d = (ratio_u32 << 1) + ((result + loc_rtt) / loc_rtt);
-    state->d_initial = state->d;
+    state->d = (ratio_u32_rtt << 1) + ((result + loc_rtt) / loc_rtt);
 
     if (!state->d) return 1;
 
@@ -154,7 +174,7 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
 
 
 // Вычисление коэффициента c на основе cwnd
-static u32 find_cof_cwnd(u32 curr_cwnd, sCC* state)
+static u32 ratio_cwnd(u32 curr_cwnd, sCC* state)
 {
     if (!curr_cwnd || !state->last_rtt || !state->curr_rtt) return 1;
 
@@ -174,8 +194,8 @@ static u32 find_cof_cwnd(u32 curr_cwnd, sCC* state)
     if (state->last_cwnd < state->curr_cwnd)
     {
         state->last_cwnd = (3 * state->last_cwnd + state->curr_cwnd) >> 2;
-        state->c = (state->last_cwnd + state->curr_cwnd) > state->d_initial ?
-            (state->last_cwnd + state->curr_cwnd) - state->d_initial : 1;
+        state->c = (state->last_cwnd + state->curr_cwnd) > state->d ?
+            (state->last_cwnd + state->curr_cwnd) - state->d : 1;
         return state->c;
     }
 
@@ -188,17 +208,17 @@ static u32 find_cof_cwnd(u32 curr_cwnd, sCC* state)
 
     state->cwnd_y = diff > DIV3(diff) ? diff - DIV3(diff) : 0;
 
-    u32 endl_cof_cwnd = (state->cwnd_x - state->cwnd_y) - state->d_initial;
+    u32 endl_ratio_cwnd = (state->cwnd_x - state->cwnd_y) - state->d;
 
-    if (!endl_cof_cwnd) return 1;
+    if (!endl_ratio_cwnd) return 1;
 
-    if (state->last_rtt > state->curr_rtt && endl_cof_cwnd >= state->curr_cwnd)
+    if (state->last_rtt > state->curr_rtt && endl_ratio_cwnd >= state->curr_cwnd)
     {
         state->c = (state->curr_cwnd + 1);
         return state->c;
     }
 
-    state->c = endl_cof_cwnd > state->curr_cwnd ? state->curr_cwnd : endl_cof_cwnd;
+    state->c = endl_ratio_cwnd > state->curr_cwnd ? state->curr_cwnd : endl_ratio_cwnd;
     state->last_cwnd = state->curr_cwnd;
 
     return state->c;
@@ -207,19 +227,19 @@ static u32 find_cof_cwnd(u32 curr_cwnd, sCC* state)
 
 
 // Вычисление коэффициента b на основе пропускной способности
-static u32 find_cof_bw(u64 tp, sCC* state)
+static u32 ratio_tp(u64 tp, sCC* state)
 {
-    if (!tp || !state->d_initial || !state->c) return 1;
+    if (!tp || !state->d || !state->c) return 1;
 
     // Проверка аномалий для нового значения throughput
     if (tp < state->cached_throughput * 8 / 10 && state->cached_throughput != 0)
-        state->throughput_t = state->cached_throughput; // Использовать кэшированное значение
+        state->throughput_temp = state->cached_throughput; // Использовать кэшированное значение
 
     else
-        state->throughput_t = tp; // Присваиваем новое значение
+        state->throughput_temp = tp; // Присваиваем новое значение
 
 
-    u32 c_d_initial = state->c + state->d_initial;
+    u32 c_d_initial = state->c + state->d;
 
     if (state->last_c_d_initial == c_d_initial && state->cached_throughput != 0)
         state->throughput = state->cached_throughput;
@@ -231,7 +251,7 @@ static u32 find_cof_bw(u64 tp, sCC* state)
         state->last_c_d_initial = c_d_initial;
     }
 
-    state->b = DIVu64(state->throughput_t, state->throughput);
+    state->b = DIVu64(state->throughput_temp, state->throughput);
     if (!state->b) return 1;
 
     return state->b;
@@ -333,22 +353,21 @@ static u32 ssthresh_comp(sCC* state)
 }
 
 
-static void comp_fairness(sCC* state, u64 throughput, u32 curr_rtt, u32 curr_ack, u32 last_ack)
+static void fairness_comp(sCC* state)
 {
     // Оценка BDP
-    u64 bdp_bytes = (throughput * (u64)curr_rtt) / MAX_RTT; // throughput (байт/с) × RTT (мкс → с)
-    u32 bdp_segments = DIV_MSS(bdp_bytes); // BDP в сегментах
+    u64 bdp_bytes = (state->throughput * (u64)state->curr_rtt) / MAX_RTT; // throughput (байт/с) × RTT (мкс → с)
+    u32 bdp_segments = MSS(bdp_bytes); // BDP в сегментах
 
     // Оценка числа потоков
-    u32 ERR_R = err_r(curr_rtt, state->last_min_rtt);
-    u32 estimated_flows = 1 + (curr_rtt > state->last_min_rtt ? (curr_rtt - state->last_min_rtt) / ERR_R : 0) +
-        (last_ack > curr_ack ? (last_ack - curr_ack) / (curr_ack ? curr_ack : 1) : 0);
+    u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
+    u32 estimated_flows = 1 + (state->curr_rtt > state->last_min_rtt ? (state->curr_rtt * state->last_min_rtt) * ERR_R : 0) +
+        (state->last_ack > state->curr_ack ? (state->last_ack * state->curr_ack) * (state->curr_ack ? state->curr_ack : 1) : 0);
 
     // Вычисление целевого окна
-    state->target_cwnd = bdp_segments / (estimated_flows ? estimated_flows : 1);
+    state->target_cwnd =  (bdp_segments / (estimated_flows ? estimated_flows : 1)) - state->curr_cwnd;
     if (state->target_cwnd < 5) state->target_cwnd = 5; // Минимальный порог
 }
-
 
 
 
@@ -468,18 +487,19 @@ static void handle_dup_ack(sCC* state)
 
 
 
-u32 inline SplineCC(u32 curr_cwnd, u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
+static u32 inline SplineCC(u32 curr_cwnd, u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
 {
     state->last_rtt = state->curr_rtt;
     state->curr_rtt = curr_rtt;
     state->curr_cwnd = curr_cwnd;
+    state->throughput = throughput;
 
     // Вычисление справедливого окн
 
-    find_cof_rtt(curr_rtt, state);
+    ratio_rtt(curr_rtt, state);
 
 
-    comp_fairness(state, throughput, state->curr_rtt, num_acks, state->last_ack);
+    fairness_comp(state);
 
     u32 slow_start_cwnd = handle_slow_start(state, num_acks);
     state->ssthresh = ssthresh_comp(state);
@@ -487,8 +507,8 @@ u32 inline SplineCC(u32 curr_cwnd, u32 curr_rtt, u64 throughput, u32 num_acks, s
     if (slow_start_cwnd)
         return slow_start_cwnd;
 
-    find_cof_cwnd(curr_cwnd, state);
-    find_cof_bw(throughput, state);
+    ratio_cwnd(curr_cwnd, state);
+    ratio_tp(throughput, state);
 
     return resolve_next_cwnd(state);
 }
