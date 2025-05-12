@@ -7,7 +7,7 @@
 #define DIV100(x) (((x) * 3) >> 8) 
 #define U32_MAX (~0U)               
 #define MAX_RTT 1000000                                   // 1 с в микросекундах
-#define MIN_RTT 10                                        // 10 мкс                                        
+#define MIN_RTT 10                                        // 10 мкс                                      
 #define MAX_SSHTHRESH  900000                             // 10Gbit/s = 856 184 (MSS)
 #define MULT0_9(x) ((x * 15) >> 4)
 
@@ -45,10 +45,10 @@ static inline u64 DIVu64(u64 x, u64 y)
     return ((x << FIXED_SHIFT) / y) >> FIXED_SHIFT;
 }
 
-static inline u32 err_r(u32 curr_rtt, u32 last_rtt, u32 last_min_rtt) 
+static inline u32 err_r(u32 curr_rtt, u32 last_min_rtt) 
 {
-    u32 RTT_SOLV = (curr_rtt + (last_rtt ? last_rtt : last_min_rtt)) >> 1;
-    static u32 smoothed_err_r = 10; // Инициализация
+    u32 RTT_SOLV = (curr_rtt + (last_min_rtt)) >> 1;
+    static u32 smoothed_err_r = 10; 
     smoothed_err_r = (smoothed_err_r * 3 + ((curr_rtt + RTT_SOLV) >> 1)) >> 2; // 0.75*старое + 0.25*новое
 
     return smoothed_err_r < 10 ? 10 : smoothed_err_r;
@@ -68,7 +68,7 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
 {
     if (!state->last_rtt || !curr_rtt || curr_rtt > MAX_RTT) return 1;
 
-    u32 ERR_R = err_r(state->curr_rtt, state->last_rtt, state->last_min_rtt);
+    u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
     state->curr_rtt = curr_rtt;
 
     // Защита от некорректных значений
@@ -98,6 +98,8 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
             state->d = 1;
             state->d_initial = state->d;
             state->cached_ratio = 0; // Сброс кэша при изменении логики
+
+            state->last_rtt = state->curr_rtt;
             return state->d;
         }
 
@@ -112,6 +114,7 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
             state->d_initial = state->d;
             state->cached_ratio = 0;
 
+            state->last_rtt = state->curr_rtt;
             return state->d;
         }
 
@@ -126,15 +129,14 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
         state->d_initial = state->d;
         state->cached_ratio = 0; // Сброс кэша при изменении логики
 
+        state->last_rtt = state->curr_rtt;
         return state->d;
     }
 
     u32 result = loc_rtt + (loc_rtt >> 1);
 
     if (!loc_rtt)
-    {
         return 1;
-    }
 
     state->d = (ratio_u32 << 1) + ((result + loc_rtt) / loc_rtt);
     state->d_initial = state->d;
@@ -147,6 +149,7 @@ static u32 find_cof_rtt(u32 curr_rtt, sCC* state)
 
     return state->d;
 }
+
 
 
 // Вычисление коэффициента c на основе cwnd
@@ -201,21 +204,26 @@ static u32 find_cof_cwnd(u32 curr_cwnd, sCC* state)
 }
 
 
+
 // Вычисление коэффициента b на основе пропускной способности
 static u32 find_cof_bw(u64 tp, sCC* state)
 {
     if (!tp || !state->d_initial || !state->c) return 1;
 
-    if (state->throughput_t != tp)
-        state->throughput_t = tp;
-
+    // Проверка аномалий для нового значения throughput
+    if (tp < state->cached_throughput * 8 / 10 && state->cached_throughput != 0) 
+        state->throughput_t = state->cached_throughput; // Использовать кэшированное значение
+    
+    else 
+        state->throughput_t = tp; // Присваиваем новое значение
+    
 
     u32 c_d_initial = state->c + state->d_initial;
 
-    if (state->last_c_d_initial == c_d_initial && state->cached_throughput != 0)
+    if (state->last_c_d_initial == c_d_initial && state->cached_throughput != 0) 
         state->throughput = state->cached_throughput;
-
-    else
+  
+    else 
     {
         state->throughput = DIVu64(tp, c_d_initial);
         state->cached_throughput = state->throughput;
@@ -227,6 +235,8 @@ static u32 find_cof_bw(u64 tp, sCC* state)
 
     return state->b;
 }
+
+
 
 static u32 handle_slow_start(sCC* state, u32 num_ack)
 {
@@ -254,7 +264,8 @@ static u32 handle_slow_start(sCC* state, u32 num_ack)
         if (state->curr_rtt > (state->last_min_rtt * 39) >> 5 || state->last_ack > state->curr_ack)
         {
             // Увеличиваем окно консервативно при перегрузке
-            state->curr_cwnd += (state->last_cwnd >> 3) + ((num_ack + 1) >> 1);
+            state->curr_cwnd = state->last_cwnd - (state->last_cwnd - state->last_max_cwnd) + ((num_ack) >> 2);
+
             // Обновляем минимальное RTT
             state->last_min_rtt = state->curr_rtt;
         }
@@ -324,7 +335,7 @@ static u32 ssthresh_comp(sCC* state)
 // Вычисление следующего cwnd
 static u32 resolve_next_cwnd(sCC* state)
 {
-    u32 ERR_R = err_r(state->curr_rtt, state->last_rtt, state->last_min_rtt);
+    u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
 
     // Проверяем, есть ли коэффициент d; если нет, возвращаем минимальное окно
     if (state->d == 0) return 1;
@@ -365,7 +376,7 @@ static u32 resolve_next_cwnd(sCC* state)
     // Реакция на перегрузку: RTT значительно вырос и число ACK уменьшилось
     if (state->curr_rtt > state->last_rtt + ERR_R || state->curr_ack < state->last_ack)
     {
-        state->last_cwnd = state->next_cwnd;
+        state->last_cwnd = state->curr_cwnd;
 
         // Если окно достигло порога, ограничиваем его и пересчитываем ssthresh
         if (state->next_cwnd >= state->ssthresh)
@@ -378,11 +389,10 @@ static u32 resolve_next_cwnd(sCC* state)
 
         }
 
-        // Уменьшаем окно для предотвращения перегрузки
-        u32 reduction_factor = state->b - (state->curr_rtt + state->last_rtt);
-        state->next_cwnd = (state->curr_cwnd * reduction_factor) / 10;
+        // Уменьшаем окно на 10% для предотвращения перегрузки
+        state->next_cwnd = (u32)MULT0_9((state->curr_cwnd));
         // Обновляем последнее и максимальное окна
-        state->last_max_cwnd = state->next_cwnd;
+        state->last_cwnd = state->next_cwnd;
 
         return state->next_cwnd;
     }
@@ -393,7 +403,7 @@ static u32 resolve_next_cwnd(sCC* state)
         // Обновляем максимальное окно
         state->last_max_cwnd = state->curr_cwnd;
         // Увеличиваем окно на d для плавного роста
-        state->next_cwnd = state->curr_cwnd - ERR_R;
+        state->next_cwnd = state->curr_cwnd + state->d;
         // Синхронизируем последнее окно
         state->last_cwnd = state->next_cwnd;
    
@@ -414,7 +424,8 @@ static void handle_dup_ack(sCC* state)
 {
     state->ssthresh = state->curr_cwnd >> 1;
     state->curr_cwnd = state->ssthresh;
-    state->next_cwnd = DIV3(state->curr_cwnd);
+
+    state->next_cwnd = DIV3(state->last_max_cwnd);
 
     state->last_max_cwnd = state->curr_cwnd;
     state->curr_ack = 0;
