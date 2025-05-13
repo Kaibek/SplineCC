@@ -24,24 +24,24 @@ typedef struct SplineCC {
     u64 throughput_t;       // Временная пропускная способность
     u32 c, d;               // Коэффициенты кубического сплайна
     u64 b;                  // Коэффициент для пропускной способности
-    u32 d_initial;          // Начальное значение d из find_cof_rtt
     u32 full_cof;           // Сумма коэффициентов
     u32 next_cwnd;          // Следующее окно перегрузки
     u32 cwnd_x, cwnd_y;     // Составляющие для вычисления endl_cof_cwnd 
     u32 cached_ratio;       // Кэшированное значение ratio
     u32 last_min_rtt;       // Самый минимальный RTT
     u64 cached_throughput;  // Кэшированное значение throughput_t
-    u32 last_c_d_initial;   // Для проверки c + d_initial
     u32 ssthresh;           // Порог для slow-start
     u32 curr_ack;
     u32 last_ack;
     u32 max_ssthresh;
 } sCC;
 
+
 static inline u64 DIVu64(u64 x, u64 y)
 {
     return ((x << FIXED_SHIFT) / y) >> FIXED_SHIFT;
 }
+
 
 static inline u32 err_r(u32 curr_rtt, u32 last_min_rtt)
 {
@@ -51,11 +51,13 @@ static inline u32 err_r(u32 curr_rtt, u32 last_min_rtt)
     return smoothed_err_r < 10 ? 10 : smoothed_err_r;
 }
 
+
 static inline u32 detect_fast_growth(u32 min, u32 curr)
 {
     if (min == 0) return 0; // Избегаем деления на ноль
     return (u32)(MULu64_FAST(min, 2) > MULu64_FAST(curr, 3));
 }
+
 
 static u32 ratio_rtt(u32 curr_rtt, sCC* state)
 {
@@ -88,7 +90,6 @@ static u32 ratio_rtt(u32 curr_rtt, sCC* state)
         if (state->curr_rtt < state->last_rtt + ERR_R)
         {
             state->d = 1;
-            state->d_initial = state->d;
             state->cached_ratio = 0;
             return state->d;
         }
@@ -99,7 +100,6 @@ static u32 ratio_rtt(u32 curr_rtt, sCC* state)
         if (state->curr_rtt + ERR_R > state->last_rtt)
         {
             state->d = 1;
-            state->d_initial = state->d;
             state->cached_ratio = 0;
             return state->d;
         }
@@ -109,7 +109,6 @@ static u32 ratio_rtt(u32 curr_rtt, sCC* state)
     else
     {
         state->d = 1;
-        state->d_initial = state->d;
         state->cached_ratio = 0;
         return state->d;
     }
@@ -117,21 +116,18 @@ static u32 ratio_rtt(u32 curr_rtt, sCC* state)
     u32 result = loc_rtt + (loc_rtt >> 1);
 
     if (!loc_rtt)
-    {
         return 1;
-    }
+    
 
     state->d = (ratio_u32 << 1) + ((result + loc_rtt) / loc_rtt);
-    state->d_initial = state->d;
-
     if (state->last_min_rtt >= state->curr_rtt) state->last_min_rtt = state->curr_rtt;
 
     state->last_rtt = state->curr_rtt;
-
     if (!state->d) return 1;
 
     return state->d;
 }
+
 
 static u32 ratio_cwnd(sCC* state)
 {
@@ -173,6 +169,7 @@ static u32 ratio_cwnd(sCC* state)
     return state->c;
 }
 
+
 static u32 ratio_bw(u64 tp, sCC* state)
 {
     if (!tp || !state->d || !state->c) return 1;
@@ -186,13 +183,13 @@ static u32 ratio_bw(u64 tp, sCC* state)
 
     u32 c_d_initial = state->c + state->d;
 
-    if (state->last_c_d_initial == c_d_initial && state->cached_throughput != 0) {
+    if (state->cached_throughput != 0) 
         state->throughput = state->cached_throughput;
-    }
-    else {
+    
+    else 
+    {
         state->throughput = DIVu64(tp, c_d_initial);
         state->cached_throughput = state->throughput;
-        state->last_c_d_initial = c_d_initial;
     }
 
     state->b = DIVu64(state->throughput_t, state->throughput);
@@ -200,6 +197,7 @@ static u32 ratio_bw(u64 tp, sCC* state)
 
     return state->b;
 }
+
 
 static u32 handle_slow_start(sCC* state, u32 num_ack)
 {
@@ -213,6 +211,7 @@ static u32 handle_slow_start(sCC* state, u32 num_ack)
             state->curr_cwnd = 5;
             state->next_cwnd = 5;
             state->last_cwnd = 5;
+
             return state->next_cwnd;
         }
 
@@ -238,12 +237,11 @@ static u32 handle_slow_start(sCC* state, u32 num_ack)
             state->last_cwnd = state->next_cwnd;
             state->last_max_cwnd = state->curr_cwnd;
         }
-
         return state->next_cwnd;
     }
-
     return 0;
 }
+
 
 static u32 ssthresh_comp(sCC* state)
 {
@@ -270,6 +268,7 @@ static u32 ssthresh_comp(sCC* state)
     return state->ssthresh;
 }
 
+
 static u32 stable_rtt(sCC* state)
 {
     if (state->curr_rtt <= state->last_rtt && state->curr_ack > state->last_ack)
@@ -290,6 +289,7 @@ static u32 stable_rtt(sCC* state)
     return 0;
 }
 
+
 static u32 overload_rtt(sCC* state)
 {
     u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
@@ -299,13 +299,11 @@ static u32 overload_rtt(sCC* state)
         state->last_cwnd = state->curr_cwnd;
 
         if (state->curr_rtt > state->last_rtt * (6 >> 2) || state->curr_ack < state->last_ack * (3 >> 2))
-        {
             state->next_cwnd = state->curr_cwnd * (12 >> 4); // Уменьшение на 30%
-        }
+      
         else
-        {
             state->next_cwnd = state->curr_cwnd * (15 >> 4); // Уменьшение на 10%
-        }
+        
 
         state->next_cwnd = state->next_cwnd < 5 ? 5 : state->next_cwnd;
 
@@ -324,6 +322,7 @@ static u32 overload_rtt(sCC* state)
     return 0;
 }
 
+
 static u32 fairness_rtt(sCC* state)
 {
     u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
@@ -337,6 +336,7 @@ static u32 fairness_rtt(sCC* state)
     return 0;
 }
 
+
 static u32 favorable_rtt(sCC* state)
 {
     u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
@@ -349,6 +349,7 @@ static u32 favorable_rtt(sCC* state)
     }
     return 0;
 }
+
 
 static u32 resolve_next_cwnd(sCC* state)
 {
@@ -378,6 +379,7 @@ static u32 resolve_next_cwnd(sCC* state)
     return state->next_cwnd;
 }
 
+
 static void handle_dup_ack(sCC* state)
 {
     state->ssthresh = state->curr_cwnd >> 1;
@@ -386,6 +388,7 @@ static void handle_dup_ack(sCC* state)
     state->last_max_cwnd = state->curr_cwnd;
     state->curr_ack = 0;
 }
+
 
 u32 inline SplineCC(u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
 {
@@ -401,7 +404,7 @@ u32 inline SplineCC(u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
 
     if (slow_start_cwnd) {
         state->curr_cwnd = slow_start_cwnd;
-        // Update last_cwnd and last_rtt with previous values
+
         state->last_cwnd = prev_cwnd;
         state->last_rtt = prev_rtt;
         return slow_start_cwnd;
@@ -412,9 +415,38 @@ u32 inline SplineCC(u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
 
     state->curr_cwnd = resolve_next_cwnd(state);
 
-    // Update last_cwnd and last_rtt with previous values
     state->last_cwnd = prev_cwnd;
     state->last_rtt = prev_rtt;
 
     return state->curr_cwnd;
+}
+
+
+int main() {
+    sCC cc_state = { 0 };
+    sCC* tmp = &cc_state;
+    tmp->last_rtt = 50;
+    tmp->last_cwnd = 10;
+    tmp->last_max_cwnd = 120;
+    tmp->last_min_rtt = 100;
+    tmp->curr_cwnd = 64; 
+    u64 throughput = 1250000000;
+
+    u32 curr_rtt[] = { 12, 10, 9, 11, 10, 9, 10, 9, 10, 11, 12, 13, 11, 10 };
+    u32 curr_ack[] = { 10, 20, 30, 40, 50, 60, 70, 85, 90, 95, 100, 110, 120, 130 };
+
+    for (int i = 0; i < 14; i++) {
+        tmp->curr_rtt = curr_rtt[i];
+        tmp->curr_ack = curr_ack[i];
+        tmp->curr_cwnd = SplineCC(tmp->curr_rtt, throughput, tmp->curr_ack, tmp);
+        printf("next_cwnd = %d\n", tmp->curr_cwnd);
+        printf("tmp->last_cwnd = %d, tmp->last_max_cwnd = %d, tmp->curr_cwnd = %d, "
+            "tmp->last_min_rtt = %d, tmp->last_rtt = %d, tmp->curr_rtt = %d, "
+            "tmp->ssthresh = %d, tmp->curr_ack = %d, tmp->max_ssthresh = %d\n",
+            tmp->last_cwnd, tmp->last_max_cwnd, tmp->curr_cwnd, tmp->last_min_rtt,
+            tmp->last_rtt, tmp->curr_rtt, tmp->ssthresh, tmp->curr_ack, tmp->max_ssthresh);
+        printf("----------------------------------------\n");
+    }
+
+    return 0;
 }
