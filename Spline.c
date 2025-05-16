@@ -38,29 +38,27 @@ typedef struct SplineCC {
     u32 max_ssthresh;
 } sCC;
 
+
 static inline u64 DIVu64(u64 x, u64 y)
 {
     return ((x << FIXED_SHIFT) / y) >> FIXED_SHIFT;
 }
 
+
 static inline u32 err_r(u32 curr_rtt, u32 last_min_rtt)
 {
     u32 RTT_SOLV = (curr_rtt + (last_min_rtt)) >> 1;
+
     static u32 smoothed_err_r = 10;
-    smoothed_err_r = (smoothed_err_r * 3 + ((curr_rtt + RTT_SOLV) >> 1)) >> 2; // 0.75*старое + 0.25*новое
+    smoothed_err_r = (smoothed_err_r * 3 + ((curr_rtt + RTT_SOLV) >> 1)) >> 2; 
     return smoothed_err_r < 10 ? 10 : smoothed_err_r;
 }
+
 
 static inline u32 detect_fast_growth(u32 min, u32 curr)
 {
     if (min == 0) return 0; // Избегаем деления на ноль
     return (u32)(MULu64_FAST(min, 2) > MULu64_FAST(curr, 3));
-}
-
-static void update_previous_state(sCC* state)
-{
-    state->last_cwnd = state->curr_cwnd;
-    state->last_rtt = state->curr_rtt;
 }
 
 static u32 ratio_rtt(u32 curr_rtt, sCC* state)
@@ -131,6 +129,7 @@ static u32 ratio_rtt(u32 curr_rtt, sCC* state)
     return state->d;
 }
 
+
 static u32 ratio_cwnd(sCC* state)
 {
     if (!state->curr_cwnd || !state->last_rtt || !state->curr_rtt) return 1;
@@ -167,6 +166,7 @@ static u32 ratio_cwnd(sCC* state)
     return state->c;
 }
 
+
 static u32 ratio_bw(u64 tp, sCC* state)
 {
     if (!tp || !state->d || !state->c) return 1;
@@ -195,13 +195,13 @@ static u32 ratio_bw(u64 tp, sCC* state)
     return state->b;
 }
 
+
 static u32 handle_slow_start(sCC* state, u32 num_ack)
 {
     state->last_ack = state->curr_ack;
-    state->curr_ack = num_ack;
-
     if (state->curr_cwnd < state->ssthresh)
     {
+        state->last_cwnd = state->curr_ack;
         if (!state->curr_cwnd)
         {
             state->curr_cwnd = 5;
@@ -210,11 +210,9 @@ static u32 handle_slow_start(sCC* state, u32 num_ack)
             return state->next_cwnd;
         }
 
-        state->curr_cwnd = 10;
-
-        if (state->curr_rtt > state->last_rtt * 39 >> 5 || state->last_ack > state->curr_ack)
+        if (state->curr_rtt > state->last_rtt << 1  || ((state->last_ack - state->curr_ack) < (state->last_ack - num_ack)))
         {
-            state->curr_cwnd = state->last_cwnd - (state->last_cwnd - state->last_max_cwnd) + (num_ack >> 2);
+            state->curr_cwnd = state->last_cwnd - (state->last_max_cwnd - state->last_cwnd) + (num_ack >> 2);
         }
         else
             state->curr_cwnd += state->last_cwnd + ((num_ack) >> 1);
@@ -232,11 +230,13 @@ static u32 handle_slow_start(sCC* state, u32 num_ack)
             state->last_max_cwnd = state->curr_cwnd;
         }
 
+        state->curr_ack = num_ack;
         return state->next_cwnd;
     }
-
+    state->curr_ack = num_ack;
     return 0;
 }
+
 
 static u32 ssthresh_comp(sCC* state)
 {
@@ -263,6 +263,7 @@ static u32 ssthresh_comp(sCC* state)
     return state->ssthresh;
 }
 
+
 static u32 stable_rtt(sCC* state)
 {
     if (state->curr_rtt <= state->last_rtt && state->curr_ack > state->last_ack)
@@ -282,6 +283,7 @@ static u32 stable_rtt(sCC* state)
     return 0;
 }
 
+
 static u32 overload_rtt(sCC* state)
 {
     u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
@@ -295,7 +297,7 @@ static u32 overload_rtt(sCC* state)
         }
         else
         {
-            state->next_cwnd = state->curr_cwnd * 15 >> 4; // Уменьшение на 10%
+            state->next_cwnd = state->curr_cwnd * 12 >> 4; // Уменьшение на 10%
         }
 
         state->next_cwnd = state->next_cwnd < 5 ? 5 : state->next_cwnd;
@@ -314,10 +316,11 @@ static u32 overload_rtt(sCC* state)
     return 0;
 }
 
+
 static u32 fairness_rtt(sCC* state)
 {
     u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
-    if (state->curr_cwnd == state->last_cwnd && state->last_rtt + ERR_R == state->curr_rtt)
+    if (state->curr_cwnd == state->last_cwnd && state->last_rtt + ERR_R >= state->curr_rtt)
     {
         state->next_cwnd = state->curr_cwnd + DIV3(state->b);
         state->last_max_cwnd = state->next_cwnd;
@@ -325,6 +328,7 @@ static u32 fairness_rtt(sCC* state)
     }
     return 0;
 }
+
 
 static u32 favorable_rtt(sCC* state)
 {
@@ -337,6 +341,7 @@ static u32 favorable_rtt(sCC* state)
     }
     return 0;
 }
+
 
 static u32 resolve_next_cwnd(sCC* state)
 {
@@ -363,14 +368,6 @@ static u32 resolve_next_cwnd(sCC* state)
     return state->next_cwnd;
 }
 
-static void handle_dup_ack(sCC* state)
-{
-    state->ssthresh = state->curr_cwnd >> 1;
-    state->curr_cwnd = state->ssthresh;
-    state->next_cwnd = DIV3(state->last_max_cwnd);
-    state->last_max_cwnd = state->curr_cwnd;
-    state->curr_ack = 0;
-}
 
 u32 inline SplineCC(u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
 {
@@ -383,7 +380,7 @@ u32 inline SplineCC(u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
 
     u32 slow_start_cwnd = handle_slow_start(state, num_acks);
 
-    if (slow_start_cwnd) 
+    if (slow_start_cwnd)
     {
         state->next_cwnd = slow_start_cwnd;
         // Update last_cwnd and last_rtt with previous values
@@ -394,7 +391,7 @@ u32 inline SplineCC(u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
     }
 
     state->next_cwnd = resolve_next_cwnd(state);
-    state->next_cwnd = DIV3(state->b) + ((state->next_cwnd > state->last_max_cwnd << 1) ? state->last_max_cwnd >> 1 : state->next_cwnd);
+    state->next_cwnd = ((state->b) >> 2) + ((state->next_cwnd > state->last_max_cwnd << 1) ? state->last_max_cwnd >> 1 : state->next_cwnd);
     state->last_cwnd = prev_cwnd;
     state->last_rtt = prev_rtt;
 
