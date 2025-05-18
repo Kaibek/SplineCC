@@ -1,148 +1,54 @@
-    sCC cc_state = { 0 };
-    sCC* tmp = &cc_state;
-    tmp->last_rtt = 50;
-    tmp->last_cwnd = 10;
-    tmp->last_max_cwnd = 120;
-    tmp->last_min_rtt = 100;
-    u64 throughput = 1250000000;
-=====================================================================================================================================================================================
+tmp->last_rtt = 50;
+tmp->last_cwnd = 10;
+tmp->last_max_cwnd = 120;
+tmp->last_min_rtt = 100;
+tmp->curr_cwnd = 64; 
+u64 throughput = 12500000000;
+u32 curr_rtt[] = { 12, 10, 9, 11, 10, 9, 10, 9, 10, 11, 12, 13, 50, 10, 12, 10, 9, 11, 10, 9, 10, 9, 10, 11, 12, 13, 50, 30, 20 ,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 9, 8};
+u32 curr_ack[] = { 10, 20, 30, 40, 50, 60, 70, 85, 90, 95, 100, 100, 120, 130, 10, 20, 30, 40, 50, 60, 70, 85, 90, 95, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 260, 270, 280, 280};
 
-    u32 curr_rtt[] = { 12, 10, 9, 11, 10, 9, 10, 9, 10, 11, 12, 13, 11, 10 };
-    u32 curr_ack[] = { 10, 20, 30, 40, 50, 60, 70, 85, 90, 95, 100, 110, 120, 130 };
-    u32 curr_cwnd = 64;
 
-next_cwnd = 64
-tmp->last_cwnd = 64, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 64, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 12, tmp->ssthresh = 560, tmp->curr_ack = 10
-----------------------------------------
-next_cwnd = 86
-tmp->last_cwnd = 86, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 86, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 10, tmp->ssthresh = 560, tmp->curr_ack = 20
-----------------------------------------
-next_cwnd = 113
-tmp->last_cwnd = 113, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 113, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 9, tmp->ssthresh = 560, tmp->curr_ack = 30
-----------------------------------------
-next_cwnd = 145
-tmp->last_cwnd = 145, tmp->last_max_cwnd = 145, tmp->curr_cwnd = 145, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 11, tmp->ssthresh = 560, tmp->curr_ack = 40
-----------------------------------------
-next_cwnd = 182
-tmp->last_cwnd = 182, tmp->last_max_cwnd = 182, tmp->curr_cwnd = 182, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 10, tmp->ssthresh = 560, tmp->curr_ack = 50
-----------------------------------------
-next_cwnd = 224
-tmp->last_cwnd = 224, tmp->last_max_cwnd = 224, tmp->curr_cwnd = 224, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 9, tmp->ssthresh = 560, tmp->curr_ack = 60
-----------------------------------------
-next_cwnd = 271
-tmp->last_cwnd = 271, tmp->last_max_cwnd = 271, tmp->curr_cwnd = 271, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 10, tmp->ssthresh = 560, tmp->curr_ack = 70
-----------------------------------------
-next_cwnd = 325
-tmp->last_cwnd = 325, tmp->last_max_cwnd = 325, tmp->curr_cwnd = 325, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 9, tmp->ssthresh = 560, tmp->curr_ack = 85
-----------------------------------------
-next_cwnd = 382
-tmp->last_cwnd = 382, tmp->last_max_cwnd = 382, tmp->curr_cwnd = 382, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 10, tmp->ssthresh = 560, tmp->curr_ack = 90
-----------------------------------------
-next_cwnd = 441
-tmp->last_cwnd = 441, tmp->last_max_cwnd = 441, tmp->curr_cwnd = 441, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 11, tmp->ssthresh = 560, tmp->curr_ack = 95
-----------------------------------------
-next_cwnd = 503
-tmp->last_cwnd = 503, tmp->last_max_cwnd = 503, tmp->curr_cwnd = 503, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 12, tmp->ssthresh = 560, tmp->curr_ack = 100
-----------------------------------------
-next_cwnd = 560
-tmp->last_cwnd = 560, tmp->last_max_cwnd = 560, tmp->curr_cwnd = 560, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 13, tmp->ssthresh = 560, tmp->curr_ack = 110
-----------------------------------------
-next_cwnd = 560
-tmp->last_cwnd = 560, tmp->last_max_cwnd = 560, tmp->curr_cwnd = 560, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 11, tmp->ssthresh = 560, tmp->curr_ack = 120
-----------------------------------------
-next_cwnd = 560
-tmp->last_cwnd = 560, tmp->last_max_cwnd = 560, tmp->curr_cwnd = 560, tmp->last_min_rtt = 12, tmp->last_rtt = 12, tmp->curr_rtt = 10, tmp->ssthresh = 560, tmp->curr_ack = 130
-=====================================================================================================================================================================================
-
-  u32 curr_rtt[] = { 80, 90, 100, 95, 105, 110, 120, 115, 130, 140, 150, 145, 135, 125 };
-  u32 curr_ack[] = { 5, 10, 15, 20, 25, 30, 35, 40, 45, 48, 51, 53, 55, 60 };
-  u32 curr_cwnd = 18;
-
-next_cwnd = 18
-tmp->last_cwnd = 18, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 18, tmp->last_min_rtt = 80, tmp->last_rtt = 80, tmp->curr_rtt = 80, tmp->ssthresh = 3640, tmp->curr_ack = 5
-----------------------------------------
-next_cwnd = 35
-tmp->last_cwnd = 35, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 35, tmp->last_min_rtt = 80, tmp->last_rtt = 90, tmp->curr_rtt = 90, tmp->ssthresh = 3640, tmp->curr_ack = 10
-----------------------------------------
-next_cwnd = 22
-tmp->last_cwnd = 22, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 22, tmp->last_min_rtt = 100, tmp->last_rtt = 100, tmp->curr_rtt = 100, tmp->ssthresh = 3640, tmp->curr_ack = 15
-----------------------------------------
-next_cwnd = 44
-tmp->last_cwnd = 44, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 44, tmp->last_min_rtt = 95, tmp->last_rtt = 95, tmp->curr_rtt = 95, tmp->ssthresh = 3640, tmp->curr_ack = 20
-----------------------------------------
-next_cwnd = 68
-tmp->last_cwnd = 68, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 68, tmp->last_min_rtt = 95, tmp->last_rtt = 105, tmp->curr_rtt = 105, tmp->ssthresh = 3640, tmp->curr_ack = 25
-----------------------------------------
-next_cwnd = 95
-tmp->last_cwnd = 95, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 95, tmp->last_min_rtt = 95, tmp->last_rtt = 110, tmp->curr_rtt = 110, tmp->ssthresh = 3640, tmp->curr_ack = 30
-----------------------------------------
-next_cwnd = 39
-tmp->last_cwnd = 39, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 39, tmp->last_min_rtt = 120, tmp->last_rtt = 120, tmp->curr_rtt = 120, tmp->ssthresh = 3640, tmp->curr_ack = 35
-----------------------------------------
-next_cwnd = 71
-tmp->last_cwnd = 71, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 71, tmp->last_min_rtt = 115, tmp->last_rtt = 115, tmp->curr_rtt = 115, tmp->ssthresh = 3640, tmp->curr_ack = 40
-----------------------------------------
-next_cwnd = 105
-tmp->last_cwnd = 105, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 105, tmp->last_min_rtt = 115, tmp->last_rtt = 130, tmp->curr_rtt = 130, tmp->ssthresh = 3640, tmp->curr_ack = 45
-----------------------------------------
-next_cwnd = 141
-tmp->last_cwnd = 141, tmp->last_max_cwnd = 141, tmp->curr_cwnd = 141, tmp->last_min_rtt = 115, tmp->last_rtt = 140, tmp->curr_rtt = 140, tmp->ssthresh = 3640, tmp->curr_ack = 48
-----------------------------------------
-next_cwnd = 53
-tmp->last_cwnd = 53, tmp->last_max_cwnd = 141, tmp->curr_cwnd = 53, tmp->last_min_rtt = 150, tmp->last_rtt = 150, tmp->curr_rtt = 150, tmp->ssthresh = 3640, tmp->curr_ack = 51
-----------------------------------------
-next_cwnd = 91
-tmp->last_cwnd = 91, tmp->last_max_cwnd = 141, tmp->curr_cwnd = 91, tmp->last_min_rtt = 145, tmp->last_rtt = 145, tmp->curr_rtt = 145, tmp->ssthresh = 3640, tmp->curr_ack = 53
-----------------------------------------
-next_cwnd = 130
-tmp->last_cwnd = 130, tmp->last_max_cwnd = 141, tmp->curr_cwnd = 130, tmp->last_min_rtt = 135, tmp->last_rtt = 135, tmp->curr_rtt = 135, tmp->ssthresh = 3640, tmp->curr_ack = 55
-----------------------------------------
-next_cwnd = 172
-tmp->last_cwnd = 172, tmp->last_max_cwnd = 172, tmp->curr_cwnd = 172, tmp->last_min_rtt = 125, tmp->last_rtt = 125, tmp->curr_rtt = 125, tmp->ssthresh = 3640, tmp->curr_ack = 60
-=====================================================================================================================================================================================
-    u32 curr_rtt[] = { 42, 48, 53, 70, 80, 90, 85, 100, 95, 120, 150, 130, 100, 85 };
-    u32 curr_ack[] = { 3, 7, 10, 15, 18, 20, 21, 25, 26, 28, 30, 28, 27, 32 };
-    u32 curr_cwnd = 12;
-
-next_cwnd = 12
-tmp->last_cwnd = 12, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 12, tmp->last_min_rtt = 42, tmp->last_rtt = 42, tmp->curr_rtt = 42, tmp->ssthresh = 1960, tmp->curr_ack = 3
-----------------------------------------
-next_cwnd = 27
-tmp->last_cwnd = 27, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 27, tmp->last_min_rtt = 42, tmp->last_rtt = 48, tmp->curr_rtt = 48, tmp->ssthresh = 1960, tmp->curr_ack = 7
-----------------------------------------
-next_cwnd = 18
-tmp->last_cwnd = 18, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 18, tmp->last_min_rtt = 53, tmp->last_rtt = 53, tmp->curr_rtt = 53, tmp->ssthresh = 1960, tmp->curr_ack = 10
-----------------------------------------
-next_cwnd = 20
-tmp->last_cwnd = 20, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 20, tmp->last_min_rtt = 70, tmp->last_rtt = 70, tmp->curr_rtt = 70, tmp->ssthresh = 1960, tmp->curr_ack = 15
-----------------------------------------
-next_cwnd = 41
-tmp->last_cwnd = 41, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 41, tmp->last_min_rtt = 70, tmp->last_rtt = 80, tmp->curr_rtt = 80, tmp->ssthresh = 1960, tmp->curr_ack = 18
-----------------------------------------
-next_cwnd = 25
-tmp->last_cwnd = 25, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 25, tmp->last_min_rtt = 90, tmp->last_rtt = 90, tmp->curr_rtt = 90, tmp->ssthresh = 1960, tmp->curr_ack = 20
-----------------------------------------
-next_cwnd = 47
-tmp->last_cwnd = 47, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 47, tmp->last_min_rtt = 85, tmp->last_rtt = 85, tmp->curr_rtt = 85, tmp->ssthresh = 1960, tmp->curr_ack = 21
-----------------------------------------
-next_cwnd = 71
-tmp->last_cwnd = 71, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 71, tmp->last_min_rtt = 85, tmp->last_rtt = 100, tmp->curr_rtt = 100, tmp->ssthresh = 1960, tmp->curr_ack = 25
-----------------------------------------
-next_cwnd = 96
-tmp->last_cwnd = 96, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 96, tmp->last_min_rtt = 85, tmp->last_rtt = 95, tmp->curr_rtt = 95, tmp->ssthresh = 1960, tmp->curr_ack = 26
-----------------------------------------
-next_cwnd = 36
-tmp->last_cwnd = 36, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 36, tmp->last_min_rtt = 120, tmp->last_rtt = 120, tmp->curr_rtt = 120, tmp->ssthresh = 1960, tmp->curr_ack = 28
-----------------------------------------
-next_cwnd = 29
-tmp->last_cwnd = 29, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 29, tmp->last_min_rtt = 150, tmp->last_rtt = 150, tmp->curr_rtt = 150, tmp->ssthresh = 1960, tmp->curr_ack = 30
-----------------------------------------
-next_cwnd = 55
-tmp->last_cwnd = 55, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 55, tmp->last_min_rtt = 130, tmp->last_rtt = 130, tmp->curr_rtt = 130, tmp->ssthresh = 1960, tmp->curr_ack = 28
-----------------------------------------
-next_cwnd = 80
-tmp->last_cwnd = 80, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 80, tmp->last_min_rtt = 100, tmp->last_rtt = 100, tmp->curr_rtt = 100, tmp->ssthresh = 1960, tmp->curr_ack = 27
-----------------------------------------
-next_cwnd = 108
-tmp->last_cwnd = 108, tmp->last_max_cwnd = 120, tmp->curr_cwnd = 108, tmp->last_min_rtt = 85, tmp->last_rtt = 85, tmp->curr_rtt = 85, tmp->ssthresh = 1960, tmp->curr_ack = 32
-----------------------------------------
+cwnd = 30, ssthresh = 0, curr_rtt = 12
+cwnd = 30, ssthresh = 0, curr_rtt = 10
+cwnd = 30, ssthresh = 0, curr_rtt = 9
+cwnd = 37, ssthresh = 0, curr_rtt = 11
+cwnd = 37, ssthresh = 0, curr_rtt = 10
+cwnd = 37, ssthresh = 0, curr_rtt = 9
+cwnd = 46, ssthresh = 0, curr_rtt = 10
+cwnd = 46, ssthresh = 0, curr_rtt = 9
+cwnd = 57, ssthresh = 0, curr_rtt = 10
+cwnd = 72, ssthresh = 0, curr_rtt = 11
+cwnd = 90, ssthresh = 0, curr_rtt = 12
+cwnd = 113, ssthresh = 0, curr_rtt = 13
+cwnd = 90, ssthresh = 140, curr_rtt = 50
+cwnd = 140, ssthresh = 140, curr_rtt = 10
+cwnd = 150, ssthresh = 140, curr_rtt = 12
+cwnd = 150, ssthresh = 140, curr_rtt = 10
+cwnd = 150, ssthresh = 140, curr_rtt = 9
+cwnd = 187, ssthresh = 140, curr_rtt = 11
+cwnd = 187, ssthresh = 140, curr_rtt = 10
+cwnd = 187, ssthresh = 140, curr_rtt = 9
+cwnd = 234, ssthresh = 140, curr_rtt = 10
+cwnd = 234, ssthresh = 140, curr_rtt = 9
+cwnd = 292, ssthresh = 140, curr_rtt = 10
+cwnd = 369, ssthresh = 140, curr_rtt = 11
+cwnd = 462, ssthresh = 140, curr_rtt = 12
+cwnd = 582, ssthresh = 140, curr_rtt = 13
+cwnd = 562, ssthresh = 722, curr_rtt = 50
+cwnd = 722, ssthresh = 722, curr_rtt = 30
+cwnd = 722, ssthresh = 722, curr_rtt = 20
+cwnd = 722, ssthresh = 722, curr_rtt = 10
+cwnd = 722, ssthresh = 722, curr_rtt = 10
+cwnd = 722, ssthresh = 722, curr_rtt = 10
+cwnd = 722, ssthresh = 722, curr_rtt = 10
+cwnd = 722, ssthresh = 722, curr_rtt = 10
+cwnd = 722, ssthresh = 722, curr_rtt = 10
+cwnd = 722, ssthresh = 722, curr_rtt = 10
+cwnd = 722, ssthresh = 722, curr_rtt = 10
+cwnd = 722, ssthresh = 722, curr_rtt = 10
+cwnd = 722, ssthresh = 722, curr_rtt = 10
+cwnd = 722, ssthresh = 722, curr_rtt = 10
+cwnd = 722, ssthresh = 722, curr_rtt = 10
+cwnd = 722, ssthresh = 722, curr_rtt = 10
+cwnd = 722, ssthresh = 722, curr_rtt = 9
+cwnd = 722, ssthresh = 722, curr_rtt = 8
