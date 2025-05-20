@@ -36,10 +36,8 @@ typedef struct SplineCC {
     u32 next_cwnd;          // Следующее окно перегрузки
     u32 last_min_rtt;       // Самый минимальный RTT
     u64 cached_throughput;  // Кэшированное значение throughput_t
-    u32 ssthresh;           // Порог для slow-start
     u32 curr_ack;
     u32 last_ack;
-    u32 max_ssthresh;
     u32 epp;                // кол-во прошедших эпох
     u32 epp_min_rtt;        // полный оборот 10 эпох, в один из эпох может измениться min_rtt, тем самым применяется режим PROBE_BW
     u32 probe_mode;         // режим
@@ -160,13 +158,9 @@ static u32 overload_rtt_bw(u32 ack, sCC* state)
             else
                 state->curr_cwnd = state->curr_cwnd * 15 >> 4; // Уменьшение на 10%
 
-            if (state->curr_cwnd >= state->ssthresh || ack <= state->last_ack)
+            if (ack <= state->last_ack)
             {
-                if (!state->ssthresh)
-                    state->curr_cwnd = state->last_cwnd;
-                else
-                    state->curr_cwnd = state->last_max_cwnd - (state->ssthresh) + state->curr_ack;
-
+                state->curr_cwnd = state->last_max_cwnd - state->curr_ack;
                 return state->curr_cwnd;
             }
             return state->curr_cwnd;
@@ -226,13 +220,9 @@ static u32 overload_rtt(u32 ack, sCC* state)
         else
             state->curr_cwnd = state->last_cwnd * 15 >> 4; // Уменьшение на 10%
 
-        if (state->curr_cwnd >= state->ssthresh || ack <= state->last_ack)
+        if (ack <= state->last_ack)
         {
-            if (!state->ssthresh)
-                state->curr_cwnd = state->last_cwnd;
-            else
-                state->curr_cwnd = state->last_max_cwnd - (state->ssthresh) + state->curr_ack;
-
+            state->curr_cwnd = state->last_max_cwnd - state->curr_ack;
             return state->curr_cwnd;
         }
 
