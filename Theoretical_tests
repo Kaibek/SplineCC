@@ -3,52 +3,100 @@ tmp->last_cwnd = 10;
 tmp->last_max_cwnd = 120;
 tmp->last_min_rtt = 100;
 tmp->curr_cwnd = 64; 
-u64 throughput = 12500000000;
+u64 throughput = 125000000;
 u32 curr_rtt[] = { 12, 10, 9, 11, 10, 9, 10, 9, 10, 11, 12, 13, 50, 10, 12, 10, 9, 11, 10, 9, 10, 9, 10, 11, 12, 13, 50, 30, 20 ,10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 9, 8};
 u32 curr_ack[] = { 10, 20, 30, 40, 50, 60, 70, 85, 90, 95, 100, 100, 120, 130, 10, 20, 30, 40, 50, 60, 70, 85, 90, 95, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 260, 270, 280, 280};
 
 
-cwnd = 30, ssthresh = 0, curr_rtt = 12
-cwnd = 30, ssthresh = 0, curr_rtt = 10
-cwnd = 30, ssthresh = 0, curr_rtt = 9
-cwnd = 37, ssthresh = 0, curr_rtt = 11
-cwnd = 37, ssthresh = 0, curr_rtt = 10
-cwnd = 37, ssthresh = 0, curr_rtt = 9
-cwnd = 46, ssthresh = 0, curr_rtt = 10
-cwnd = 46, ssthresh = 0, curr_rtt = 9
-cwnd = 57, ssthresh = 0, curr_rtt = 10
-cwnd = 72, ssthresh = 0, curr_rtt = 11
-cwnd = 90, ssthresh = 0, curr_rtt = 12
-cwnd = 113, ssthresh = 0, curr_rtt = 13
-cwnd = 90, ssthresh = 140, curr_rtt = 50
-cwnd = 140, ssthresh = 140, curr_rtt = 10
-cwnd = 150, ssthresh = 140, curr_rtt = 12
-cwnd = 150, ssthresh = 140, curr_rtt = 10
-cwnd = 150, ssthresh = 140, curr_rtt = 9
-cwnd = 187, ssthresh = 140, curr_rtt = 11
-cwnd = 187, ssthresh = 140, curr_rtt = 10
-cwnd = 187, ssthresh = 140, curr_rtt = 9
-cwnd = 234, ssthresh = 140, curr_rtt = 10
-cwnd = 234, ssthresh = 140, curr_rtt = 9
-cwnd = 292, ssthresh = 140, curr_rtt = 10
-cwnd = 369, ssthresh = 140, curr_rtt = 11
-cwnd = 462, ssthresh = 140, curr_rtt = 12
-cwnd = 582, ssthresh = 140, curr_rtt = 13
-cwnd = 562, ssthresh = 722, curr_rtt = 50
-cwnd = 722, ssthresh = 722, curr_rtt = 30
-cwnd = 722, ssthresh = 722, curr_rtt = 20
-cwnd = 722, ssthresh = 722, curr_rtt = 10
-cwnd = 722, ssthresh = 722, curr_rtt = 10
-cwnd = 722, ssthresh = 722, curr_rtt = 10
-cwnd = 722, ssthresh = 722, curr_rtt = 10
-cwnd = 722, ssthresh = 722, curr_rtt = 10
-cwnd = 722, ssthresh = 722, curr_rtt = 10
-cwnd = 722, ssthresh = 722, curr_rtt = 10
-cwnd = 722, ssthresh = 722, curr_rtt = 10
-cwnd = 722, ssthresh = 722, curr_rtt = 10
-cwnd = 722, ssthresh = 722, curr_rtt = 10
-cwnd = 722, ssthresh = 722, curr_rtt = 10
-cwnd = 722, ssthresh = 722, curr_rtt = 10
-cwnd = 722, ssthresh = 722, curr_rtt = 10
-cwnd = 722, ssthresh = 722, curr_rtt = 9
-cwnd = 722, ssthresh = 722, curr_rtt = 8
+probe_start!
+cwnd = 74, rtt = 12, ack = 10, bw = 501, last_bw = 0
+probe_start raw!
+cwnd = 94, rtt = 10, ack = 20, bw = 187, last_bw = 125
+probe_start raw!
+cwnd = 124, rtt = 9, ack = 30, bw = 210, last_bw = 140
+probe_start raw!
+cwnd = 164, rtt = 11, ack = 40, bw = 235, last_bw = 157
+probe_start raw!
+cwnd = 214, rtt = 10, ack = 50, bw = 264, last_bw = 176
+probe_start raw!
+cwnd = 274, rtt = 9, ack = 60, bw = 297, last_bw = 198
+probe_start raw!
+cwnd = 344, rtt = 10, ack = 70, bw = 333, last_bw = 222
+probe_start raw!
+cwnd = 429, rtt = 9, ack = 85, bw = 373, last_bw = 249
+probe_start raw!
+cwnd = 519, rtt = 10, ack = 90, bw = 420, last_bw = 280
+probe_bw!
+probe_bw raw!
+cwnd = 472, rtt = 11, ack = 95, bw = 472, last_bw = 315
+probe_bw raw!
+cwnd = 531, rtt = 12, ack = 100, bw = 531, last_bw = 354
+probe_bw raw!
+cwnd = 597, rtt = 13, ack = 100, bw = 597, last_bw = 398
+probe_bw raw!
+cwnd = 447, rtt = 50, ack = 120, bw = 447, last_bw = 447
+probe_bw raw!
+cwnd = 530, rtt = 10, ack = 130, bw = 670, last_bw = 447
+probe_bw raw!
+cwnd = 359, rtt = 12, ack = 10, bw = 752, last_bw = 502
+probe_bw raw!
+cwnd = 582, rtt = 10, ack = 20, bw = 836, last_bw = 564
+probe_bw raw!
+cwnd = 718, rtt = 9, ack = 30, bw = 752, last_bw = 632
+probe_bw raw!
+cwnd = 752, rtt = 11, ack = 40, bw = 752, last_bw = 662
+probe_bw raw!
+cwnd = 836, rtt = 10, ack = 50, bw = 836, last_bw = 684
+probe_bw!
+probe_bw raw!
+cwnd = 752, rtt = 9, ack = 60, bw = 752, last_bw = 722
+probe_bw raw!
+cwnd = 752, rtt = 10, ack = 70, bw = 752, last_bw = 729
+probe_bw raw!
+cwnd = 752, rtt = 9, ack = 85, bw = 752, last_bw = 734
+probe_bw raw!
+cwnd = 752, rtt = 10, ack = 90, bw = 752, last_bw = 738
+probe_bw raw!
+cwnd = 752, rtt = 11, ack = 95, bw = 752, last_bw = 741
+probe_bw raw!
+cwnd = 836, rtt = 12, ack = 100, bw = 836, last_bw = 743
+probe_bw raw!
+cwnd = 836, rtt = 13, ack = 110, bw = 836, last_bw = 766
+probe_bw raw!
+cwnd = 783, rtt = 50, ack = 120, bw = 783, last_bw = 783
+probe_bw raw!
+cwnd = 783, rtt = 30, ack = 130, bw = 783, last_bw = 783
+probe_bw raw!
+cwnd = 783, rtt = 20, ack = 140, bw = 783, last_bw = 783
+probe_bw!
+probe_bw raw!
+cwnd = 806, rtt = 10, ack = 150, bw = 1170, last_bw = 783
+probe_bw raw!
+cwnd = 752, rtt = 10, ack = 160, bw = 752, last_bw = 879
+probe_bw raw!
+cwnd = 752, rtt = 10, ack = 170, bw = 752, last_bw = 847
+probe_bw raw!
+cwnd = 752, rtt = 10, ack = 180, bw = 752, last_bw = 823
+probe_bw raw!
+cwnd = 752, rtt = 10, ack = 190, bw = 752, last_bw = 805
+probe_bw raw!
+cwnd = 752, rtt = 10, ack = 200, bw = 752, last_bw = 791
+probe_bw raw!
+cwnd = 752, rtt = 10, ack = 210, bw = 752, last_bw = 781
+probe_bw raw!
+cwnd = 752, rtt = 10, ack = 220, bw = 752, last_bw = 773
+probe_bw raw!
+cwnd = 752, rtt = 10, ack = 230, bw = 752, last_bw = 767
+probe_bw raw!
+cwnd = 752, rtt = 10, ack = 240, bw = 752, last_bw = 763
+probe_rtt!
+probe_rtt raw!
+cwnd = 814, rtt = 10, ack = 250, bw = 752, last_bw = 760
+probe_rtt raw!
+cwnd = 817, rtt = 10, ack = 260, bw = 752, last_bw = 758
+probe_rtt raw!
+cwnd = 819, rtt = 10, ack = 270, bw = 752, last_bw = 756
+probe_rtt raw!
+cwnd = 822, rtt = 9, ack = 280, bw = 752, last_bw = 755
+probe_rtt raw!
+cwnd = 738, rtt = 8, ack = 280, bw = 668, last_bw = 754
