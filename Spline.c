@@ -10,7 +10,7 @@
 #define MAX_SSHTHRESH  900000                            // 10Gbit/s = 856 184 (MSS)
 #define MULT0_9(x) ((x * 15) >> 4)
 
-typedef enum 
+typedef enum
 {
     MODE_START_PROBE,
     MODE_PROBE_BW,
@@ -39,7 +39,7 @@ typedef struct SplineCC {
     u32 ssthresh;           // Порог для slow-start
     u32 curr_ack;
     u32 last_ack;
-    u32 max_ssthresh;       
+    u32 max_ssthresh;
     u32 epp;                // кол-во прошедших эпох
     u32 epp_min_rtt;        // полный оборот 10 эпох, в один из эпох может измениться min_rtt
     u32 probe_mode;         // режим
@@ -47,16 +47,16 @@ typedef struct SplineCC {
     ProbeMode current_mode; // Track the current probing mode
 } sCC;
 
- static u32 __epsilone_rtt(u32 rtt, u32 ack, sCC* state)
+static u32 __epsilone_rtt(u32 rtt, u32 ack, sCC* state)
 {
-     if (rtt == 0) rtt = 1;
-     state->last_ack = state->curr_ack;
-     state->curr_ack = ack;
-     if (state->last_rtt < MIN_RTT)
-         state->last_rtt = MIN_RTT;
+    if (rtt == 0) rtt = 1;
+    state->last_ack = state->curr_ack;
+    state->curr_ack = ack;
+    if (state->last_rtt < MIN_RTT)
+        state->last_rtt = MIN_RTT;
 
     state->eps = (((rtt + state->curr_rtt) / rtt) + 1);
-    
+
     state->last_rtt = state->curr_rtt;
     state->curr_rtt = rtt;
 
@@ -70,18 +70,26 @@ typedef struct SplineCC {
 
 static u64 __bw(u64 tp, sCC* state)
 {
+    u32 rtt_scaling = (state->last_min_rtt + state->last_rtt) >> 1;
     state->throughput = tp;
-    u64 bw = (state->throughput * state->curr_rtt) >> FIXED_SHIFT;
+    u64 bw = (state->throughput * ((rtt_scaling * 2))) >> FIXED_SHIFT;
     // EMA (Exponential Moving Average)
-    state->last_bw = state->last_bw = (state->last_bw * 7 + state->bw) >> 3; // EMA 87.5%
+    state->last_bw = (state->last_bw * 3 + state->bw) >> 2; // EMA 75%
     state->bw = bw / 1460;
 
-    if (state->last_bw) 
+    if (state->last_bw)
     {
         // Фильтр — минимальное значение 75% от предыдущего bw
         u64 min_allowed = (state->last_bw * 3) >> 2;  // 75%
         if (state->bw < min_allowed)
             state->bw = min_allowed;
+
+        u64 max_allowed = (state->last_bw * 6) >> 2;
+        if (state->bw > max_allowed)
+            state->bw = max_allowed;
+
+        if (state->curr_rtt > (state->last_min_rtt * 2))
+            state->bw = state->last_bw;
     }
     return state->bw;
 }
@@ -109,9 +117,10 @@ static u32 handle_slow_start(sCC* state, u32 num_ack)
             state->curr_cwnd += (state->last_cwnd + num_ack) >> 2;
 
         if (state->curr_cwnd > state->last_max_cwnd)
+            state->last_max_cwnd = state->curr_cwnd;
 
-        if (state->curr_cwnd > state->ssthresh)
-            state->curr_cwnd = state->ssthresh;
+            if (state->curr_cwnd > state->ssthresh)
+                state->curr_cwnd = state->ssthresh;
 
         state->curr_ack = num_ack;
         return state->curr_cwnd;
@@ -144,7 +153,6 @@ static u32 ssthresh_comp(sCC* state)
     return state->ssthresh;
 }
 
-
 static u32 stable_rtt_bw(sCC* state)
 {
     if (state->eps >= 2 && state->eps < 3)
@@ -153,11 +161,14 @@ static u32 stable_rtt_bw(sCC* state)
             state->curr_cwnd = 1;
 
         state->curr_cwnd = state->next_cwnd + (state->bw >> state->eps);
+        if (((state->curr_cwnd * 3) >> 2) > state->last_cwnd)
+        {
+            state->curr_cwnd = (state->curr_cwnd * 2) >> 2;
+        }
         return state->curr_cwnd;
     }
     return 0;
 }
-
 
 static u32 fairness_rtt_bw(sCC* state)
 {
@@ -169,12 +180,15 @@ static u32 fairness_rtt_bw(sCC* state)
     return 0;
 }
 
-
 static u32 favorable_rtt_bw(sCC* state)
 {
     if (state->eps >= 3)
     {
-        state->curr_cwnd += (state->bw >> state->eps);
+        state->curr_cwnd += (state->bw >> state->eps / 2);
+        if (((state->curr_cwnd * 3) >> 2) > state->last_cwnd)
+        {
+            state->curr_cwnd = (state->curr_cwnd * 3) >> 2;
+        }
         return state->curr_cwnd;
     }
     return 0;
@@ -232,7 +246,6 @@ static u32 prob_bw(u32 ack, sCC* state)
     return state->curr_cwnd;
 }
 
-
 static u32 stable_rtt(sCC* state)
 {
     if (state->eps < 3 && state->gamma == 2)
@@ -245,7 +258,6 @@ static u32 stable_rtt(sCC* state)
     }
     return 0;
 }
-
 
 static u32 overload_rtt(u32 ack, sCC* state)
 {
@@ -275,7 +287,6 @@ static u32 overload_rtt(u32 ack, sCC* state)
     return 0;
 }
 
-
 static u32 fairness_rtt(sCC* state)
 {
     if (state->eps <= 2 || state->gamma < 2)
@@ -285,7 +296,6 @@ static u32 fairness_rtt(sCC* state)
     }
     return 0;
 }
-
 
 static u32 favorable_rtt(sCC* state)
 {
@@ -320,9 +330,7 @@ static u32 prob_rtt(u32 ack, sCC* state)
     return state->curr_cwnd;
 }
 
-
-
-static u32 drain_probe(sCC* state) 
+static u32 drain_probe(sCC* state)
 {
     if (state->curr_cwnd > state->bw)
         state->curr_cwnd -= (state->curr_cwnd - state->bw) >> 1;
@@ -409,8 +417,6 @@ static u32 probs(u32 ack, sCC* state)
     }
 }
 
-
-
 u32 inline SplineCC(u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
 {
     if (state->last_max_cwnd < state->curr_cwnd)
@@ -438,7 +444,7 @@ u32 inline SplineCC(u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
 
     if (state->bw <= state->curr_cwnd && state->current_mode == MODE_PROBE_RTT)
     {
-        state->next_cwnd = state->bw + (state->curr_cwnd >> 2);
+        state->next_cwnd = state->bw + (state->curr_ack >> 2);
         return state->next_cwnd;
     }
 
