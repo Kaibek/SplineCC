@@ -41,15 +41,6 @@ SplineCC — это современный алгоритм управления
 4. **Вычисление `gamma` (`__gamma_ack`)**:
    - `gamma = ((curr_ack + last_ack) / curr_ack) + 1 = ((10 + 10) / 10) + 1 = 3`.
 
-5. **Медленный старт (`handle_slow_start`)**:
-   - Проверяем: `curr_cwnd = 64 < ssthresh = 120`, значит, активна фаза медленного старта.
-   - Увеличиваем `curr_cwnd += (last_cwnd + num_acks) >> 2 = (10 + 10) / 4 = 5`, итого `curr_cwnd = 64 + 5 = 69`.
-   - Проверяем: `curr_cwnd = 69 < ssthresh = 120`, возвращаем `next_cwnd = 69`.
-
-6. **Корректировка порога (`ssthresh_comp`)**:
-   - Если `ssthresh = 0`, вычисляем `ssthresh = DIV100(last_max_cwnd * THRESHOLD_PERCENT) = (120 * 100 * 3) / 256 ≈ 140`.
-   - Проверяем условия: `curr_rtt = 12 < last_min_rtt * 39 / 32 = 15`, `curr_ack = 10 = last_ack`, поэтому `ssthresh` остаётся 120.
-
 7. **Режимы работы (`probs`)**:
    - Если медленный старт не активен, вызывается `probs` с учётом режима (`START_PROBE`, `PROBE_BW`, `PROBE_RTT`, `DRAIN_PROBE`).
    - В `START_PROBE`: `curr_cwnd += curr_ack = 64 + 10 = 74`.
