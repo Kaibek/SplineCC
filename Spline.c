@@ -10,6 +10,15 @@
 #define MAX_SSHTHRESH  900000                            // 10Gbit/s = 856 184 (MSS)
 #define MULT0_9(x) ((x * 15) >> 4)
 
+typedef enum 
+{
+    MODE_START_PROBE,
+    MODE_PROBE_BW,
+    MODE_PROBE_RTT,
+    MODE_DRAIN_PROBE
+} ProbeMode;
+
+
 typedef unsigned int u32;
 typedef unsigned long long u64;
 
@@ -21,162 +30,72 @@ typedef struct SplineCC {
     u32 last_cwnd;          // Предыдущее окно перегрузки (сегменты)
     u64 throughput;         // Пропускная способность (байт/с)
     u64 throughput_t;       // Временная пропускная способность
-    u32 c, d;               // Коэффициенты кубического сплайна
-    u64 b;                  // Коэффициент для пропускной способности
-    u32 d_initial;          // Начальное значение d из find_cof_rtt
-    u32 full_cof;           // Сумма коэффициентов
+    u32 eps;                // эпсилон RTT
+    u64 bw;                 // Коэффициент для пропускной способности
+    u32 last_bw;
     u32 next_cwnd;          // Следующее окно перегрузки
-    u32 cwnd_x, cwnd_y;     // Составляющие для вычисления endl_cof_cwnd 
-    u32 cached_ratio;       // Кэшированное значение ratio
     u32 last_min_rtt;       // Самый минимальный RTT
     u64 cached_throughput;  // Кэшированное значение throughput_t
-    u32 last_c_d_initial;   // Для проверки c + d_initial
     u32 ssthresh;           // Порог для slow-start
     u32 curr_ack;
     u32 last_ack;
-    u32 max_ssthresh;
+    u32 max_ssthresh;       
+    u32 epp;                // кол-во прошедших эпох
+    u32 epp_min_rtt;        // полный оборот 10 эпох, в один из эпох может измениться min_rtt
+    u32 probe_mode;         // режим
+    u32 gamma;              // гамма от ACK
+    ProbeMode current_mode; // Track the current probing mode
 } sCC;
 
+ static u32 __epsilone_rtt(u32 rtt, u32 ack, sCC* state)
+{
+     if (rtt == 0) rtt = 1;
+     state->last_ack = state->curr_ack;
+     state->curr_ack = ack;
+     if (state->last_rtt < MIN_RTT)
+         state->last_rtt = MIN_RTT;
+
+    state->eps = (((rtt + state->curr_rtt) / rtt) + 1);
+    
+    state->last_rtt = state->curr_rtt;
+    state->curr_rtt = rtt;
+
+    if (state->last_min_rtt >= state->curr_rtt)
+    {
+        state->last_min_rtt = state->curr_rtt;
+        state->epp_min_rtt++;
+    }
+    return state->eps;
+}
+
+static u64 __bw(u64 tp, sCC* state)
+{
+    state->throughput = tp;
+    u64 bw = (state->throughput * state->curr_rtt) >> FIXED_SHIFT;
+    // EMA (Exponential Moving Average)
+    state->last_bw = state->last_bw = (state->last_bw * 7 + state->bw) >> 3; // EMA 87.5%
+    state->bw = bw / 1460;
+
+    if (state->last_bw) 
+    {
+        // Фильтр — минимальное значение 75% от предыдущего bw
+        u64 min_allowed = (state->last_bw * 3) >> 2;  // 75%
+        if (state->bw < min_allowed)
+            state->bw = min_allowed;
+    }
+    return state->bw;
+}
+
+static u32 __gamma_ack(sCC* state)
+{
+    state->gamma = (((state->curr_ack + state->last_ack) / state->curr_ack) + 1);
+    return state->gamma;
+}
 
 static inline u64 DIVu64(u64 x, u64 y)
 {
     return ((x << FIXED_SHIFT) / y) >> FIXED_SHIFT;
 }
-
-static inline u32 err_r(u32 curr_rtt, u32 last_min_rtt)
-{
-    u32 RTT_SOLV = (curr_rtt + (last_min_rtt)) >> 1;
-
-    static u32 smoothed_err_r = 10;
-    smoothed_err_r = (smoothed_err_r * 3 + ((curr_rtt + RTT_SOLV) >> 1)) >> 2; 
-    return smoothed_err_r < 10 ? 10 : smoothed_err_r;
-}
-
-static u32 ratio_rtt(u32 curr_rtt, sCC* state)
-{
-    if (state->curr_rtt < state->last_min_rtt)
-        state->last_min_rtt = state->curr_rtt;
-
-    if (!state->last_rtt || !curr_rtt || curr_rtt > MAX_RTT) return 1;
-
-    u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
-    state->curr_rtt = curr_rtt;
-
-    if (state->last_rtt < MIN_RTT)
-        state->last_rtt = MIN_RTT;
-
-    u32 ratio_u32;
-
-    if (state->last_rtt == state->curr_rtt && state->cached_ratio != 0)
-        ratio_u32 = state->cached_ratio;
-    else
-    {
-        u64 ratio = (state->curr_rtt << 3) / state->last_rtt;
-        ratio_u32 = (u32)ratio;
-    }
-
-    u32 ratio_cubed = (ratio_u32 * ratio_u32 * ratio_u32) >> 1;
-    u32 loc_rtt;
-
-    if (state->curr_rtt > state->last_rtt)
-    {
-        if (state->curr_rtt < state->last_rtt + ERR_R)
-        {
-            state->d = 1;
-            state->cached_ratio = 0;
-            return state->d;
-        }
-        loc_rtt = ratio_cubed + (state->curr_rtt >> 1);
-    }
-    else if (state->curr_rtt < state->last_rtt)
-    {
-        if (state->curr_rtt + ERR_R > state->last_rtt)
-        {
-            state->d = 1;
-            state->cached_ratio = 0;
-            return state->d;
-        }
-        loc_rtt = (ratio_cubed + (state->curr_rtt >> 1) + DIVu64(DIV3(state->curr_rtt), state->curr_rtt));
-        state->cached_ratio = 0;
-    }
-    else
-    {
-        state->d = 1;
-        state->cached_ratio = 0;
-        return state->d;
-    }
-
-    u32 result = loc_rtt + (loc_rtt >> 1);
-
-    if (!loc_rtt)
-       return 1;
-
-    state->d = (ratio_u32 << 1) + ((result + loc_rtt) / loc_rtt);
-    if (state->last_min_rtt >= state->curr_rtt) state->last_min_rtt = state->curr_rtt;
-    return state->d;
-}
-
-
-static u32 ratio_cwnd(sCC* state)
-{
-    if (!state->curr_cwnd || !state->last_rtt || !state->curr_rtt) return 1;
-
-    if (!state->last_cwnd)
-        return state->c = 1;
-
-    if (state->last_cwnd < state->curr_cwnd)
-    {
-        u32 ls_cw = (3 * state->last_cwnd + state->curr_cwnd) >> 2;
-        state->c = (ls_cw + state->curr_cwnd) > state->d ?
-            (ls_cw + state->curr_cwnd) - state->d : 1;
-        return state->c;
-    }
-
-    state->cwnd_x = state->last_cwnd + state->curr_cwnd;
-    u32 diff = (state->last_cwnd > state->curr_cwnd)
-        ? (state->last_cwnd - state->curr_cwnd)
-        : (state->curr_cwnd - state->last_cwnd);
-
-    state->cwnd_y = diff > DIV3(diff) ? diff - DIV3(diff) : 0;
-    u32 endl_cof_cwnd = (state->cwnd_x - state->cwnd_y) - state->d;
-
-    if (!endl_cof_cwnd) return 1;
-
-    if (state->last_rtt > state->curr_rtt && endl_cof_cwnd >= state->curr_cwnd)
-    {
-        state->c = (state->curr_cwnd + 1);
-        return state->c;
-    }
-
-    state->c = endl_cof_cwnd > state->curr_cwnd ? state->curr_cwnd : endl_cof_cwnd;
-    return state->c;
-}
-
-
-static u32 ratio_bw(u64 tp, sCC* state)
-{
-    if (!tp || !state->d || !state->c) return 1;
-
-    if (tp < state->cached_throughput * 8 / 10 && state->cached_throughput != 0)
-        state->throughput_t = state->cached_throughput;
-    
-    else 
-        state->throughput_t = tp;
-    u32 c_d_initial = state->c + state->d;
-
-    if (state->last_c_d_initial == c_d_initial && state->cached_throughput != 0) 
-        state->throughput = state->cached_throughput;
-    else 
-    {
-        state->throughput = DIVu64(tp, c_d_initial);
-        state->cached_throughput = state->throughput;
-        state->last_c_d_initial = c_d_initial;
-    }
-    state->b = DIVu64(state->throughput_t, state->throughput);
-    if (!state->b) return 1;
-    return state->b;
-}
-
 
 static u32 handle_slow_start(sCC* state, u32 num_ack)
 {
@@ -184,7 +103,7 @@ static u32 handle_slow_start(sCC* state, u32 num_ack)
     {
         state->last_ack = state->curr_ack;
 
-        if (state->curr_rtt > state->last_rtt << 1 || ((state->last_ack - state->curr_ack) < (state->last_ack - num_ack)))
+        if (state->last_ack - state->curr_ack < state->last_ack - num_ack)
             state->curr_cwnd = (state->last_cwnd) - (state->last_max_cwnd + state->last_cwnd);
         else
             state->curr_cwnd += (state->last_cwnd + num_ack) >> 2;
@@ -200,17 +119,16 @@ static u32 handle_slow_start(sCC* state, u32 num_ack)
     return 0;
 }
 
-
 static u32 ssthresh_comp(sCC* state)
 {
     if (!state->ssthresh)
-        state->ssthresh = DIV100(state->b / state->d + (state->last_max_cwnd * THRESHOLD_PERCENT));
+        state->ssthresh = DIV100((state->last_max_cwnd * THRESHOLD_PERCENT));
 
     if (state->ssthresh > MAX_SSHTHRESH)
-        state->ssthresh = state->b + MAX_SSHTHRESH;
+        state->ssthresh = MAX_SSHTHRESH;
 
     if (!state->max_ssthresh)
-        state->max_ssthresh = state->ssthresh * state->d;
+        state->max_ssthresh = state->ssthresh;
 
     if (state->curr_rtt > state->last_min_rtt * 39 >> 5 && state->curr_ack < state->last_ack)
         state->ssthresh = state->curr_cwnd;
@@ -227,9 +145,97 @@ static u32 ssthresh_comp(sCC* state)
 }
 
 
+static u32 stable_rtt_bw(sCC* state)
+{
+    if (state->eps >= 2 && state->eps < 3)
+    {
+        if (state->curr_cwnd < 1)
+            state->curr_cwnd = 1;
+
+        state->curr_cwnd = state->next_cwnd + (state->bw >> state->eps);
+        return state->curr_cwnd;
+    }
+    return 0;
+}
+
+
+static u32 fairness_rtt_bw(sCC* state)
+{
+    if (state->eps > 1 && state->eps <= 2)
+    {
+        state->curr_cwnd = state->last_cwnd - (state->curr_cwnd >> 2);
+        return state->curr_cwnd;
+    }
+    return 0;
+}
+
+
+static u32 favorable_rtt_bw(sCC* state)
+{
+    if (state->eps >= 3)
+    {
+        state->curr_cwnd += (state->bw >> state->eps);
+        return state->curr_cwnd;
+    }
+    return 0;
+}
+
+static u32 overload_rtt_bw(u32 ack, sCC* state)
+{
+    {
+        if (state->eps <= 1)
+        {
+
+            if (state->curr_rtt > state->last_rtt + state->eps)
+                state->curr_cwnd = state->curr_cwnd * 12 >> 4; // Уменьшение на 30%
+            else
+                state->curr_cwnd = state->curr_cwnd * 15 >> 4; // Уменьшение на 10%
+
+            if (state->curr_cwnd >= state->ssthresh || ack <= state->last_ack)
+            {
+                if (!state->ssthresh)
+                    state->curr_cwnd = state->last_cwnd;
+                else
+                    state->curr_cwnd = state->last_max_cwnd - (state->ssthresh) + state->curr_ack;
+
+                state->ssthresh = ssthresh_comp(state);
+                return state->curr_cwnd;
+            }
+            return state->curr_cwnd;
+        }
+
+        return 0;
+    }
+
+}
+
+static u32 prob_bw(u32 ack, sCC* state)
+{
+    u32 stab, over, fairness, favorable;
+
+    stab = stable_rtt_bw(state);
+    if (stab)
+        return stab;
+
+    fairness = fairness_rtt_bw(state);
+    if (fairness)
+        return fairness;
+
+    over = overload_rtt_bw(ack, state);
+    if (over)
+        return over;
+
+    favorable = favorable_rtt_bw(state);
+    if (favorable)
+        return favorable;
+
+    return state->curr_cwnd;
+}
+
+
 static u32 stable_rtt(sCC* state)
 {
-    if (state->curr_rtt <= state->last_rtt && state->curr_ack > state->last_ack)
+    if (state->eps < 3 && state->gamma == 2)
     {
         if (state->curr_cwnd < 1)
             state->curr_cwnd = 1;
@@ -243,15 +249,12 @@ static u32 stable_rtt(sCC* state)
 
 static u32 overload_rtt(u32 ack, sCC* state)
 {
-    state->last_ack = state->curr_ack;
-    u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
-
-    if (state->curr_rtt > state->last_rtt + ERR_R || state->curr_ack < state->last_ack)
+    if (state->eps <= 1 || state->gamma <= 1)
     {
 
         if (state->curr_rtt > state->last_rtt * 6 >> 2 || ack < state->last_ack * 3 >> 2)
             state->curr_cwnd = state->last_cwnd * 12 >> 4; // Уменьшение на 30%
-        
+
         else
             state->curr_cwnd = state->last_cwnd * 15 >> 4; // Уменьшение на 10%
 
@@ -266,7 +269,6 @@ static u32 overload_rtt(u32 ack, sCC* state)
             return state->curr_cwnd;
         }
 
-        state->curr_ack = ack;
         return state->curr_cwnd;
     }
 
@@ -276,8 +278,7 @@ static u32 overload_rtt(u32 ack, sCC* state)
 
 static u32 fairness_rtt(sCC* state)
 {
-    u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
-    if (state->curr_cwnd == state->last_cwnd && state->last_rtt + ERR_R < state->curr_rtt)
+    if (state->eps <= 2 || state->gamma < 2)
     {
         state->curr_cwnd = state->last_cwnd - (state->curr_cwnd >> 2);
         return state->curr_cwnd;
@@ -288,21 +289,17 @@ static u32 fairness_rtt(sCC* state)
 
 static u32 favorable_rtt(sCC* state)
 {
-    u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
-    if (state->curr_cwnd >= state->last_cwnd && state->curr_rtt <= state->last_rtt + ERR_R)
+    if (state->eps >= 3 || state->gamma >= 3)
     {
-        state->curr_cwnd = state->last_cwnd + (state->b >> 2);
+        state->curr_cwnd = state->last_cwnd + (state->curr_ack >> 2);
         return state->curr_cwnd;
     }
     return 0;
 }
 
-
-static u32 resolve_next_cwnd(u32 ack, sCC* state)
+static u32 prob_rtt(u32 ack, sCC* state)
 {
-    u32 ERR_R = err_r(state->curr_rtt, state->last_min_rtt);
     u32 stab, over, fairness, favorable;
-    if (state->d == 0) return 1;
 
     stab = stable_rtt(state);
     if (stab)
@@ -319,7 +316,99 @@ static u32 resolve_next_cwnd(u32 ack, sCC* state)
     favorable = favorable_rtt(state);
     if (favorable)
         return favorable;
+
+    return state->curr_cwnd;
 }
+
+
+
+static u32 drain_probe(sCC* state) 
+{
+    if (state->curr_cwnd > state->bw)
+        state->curr_cwnd -= (state->curr_cwnd - state->bw) >> 1;
+    return state->curr_cwnd;
+}
+
+static u32 start_probe(sCC* state)
+{
+    state->curr_cwnd = state->curr_cwnd + state->curr_ack;
+    return state->curr_cwnd;
+}
+
+static u32 probs(u32 ack, sCC* state)
+{
+    // Увеличиваем эпоху
+    if (state->epp < 10) {
+        state->epp++;
+    }
+
+    // Первая инициализация
+    if (!state->probe_mode) {
+        printf("probe_start!\n");
+        state->probe_mode = 1;
+        state->current_mode = MODE_START_PROBE;
+        return start_probe(state);
+    }
+
+    // Плохое состояние — вход в дренаж
+    if (state->eps <= 1 && state->gamma <= 1 && state->curr_rtt > state->last_rtt) {
+        printf("drain_probe! Problem RTT/ACK!\n");
+        state->current_mode = MODE_DRAIN_PROBE;
+        return drain_probe(state);
+    }
+
+    // Каждые 10 эпох — смена режима
+    if (state->epp == 10) {
+        state->epp = 0;
+
+        if (state->epp_min_rtt) {
+            state->epp_min_rtt = 0;
+            state->current_mode = MODE_PROBE_BW;
+            printf("probe_bw!\n");
+        }
+        else {
+            // Циклический переход
+            switch (state->current_mode) {
+            case MODE_PROBE_BW:
+                state->current_mode = MODE_PROBE_RTT;
+                printf("probe_rtt!\n");
+                break;
+            case MODE_PROBE_RTT:
+                state->current_mode = MODE_DRAIN_PROBE;
+                printf("drain_probe!\n");
+                break;
+            case MODE_DRAIN_PROBE:
+                state->current_mode = MODE_START_PROBE;
+                printf("probe_start!\n");
+                break;
+            default:
+                state->current_mode = MODE_PROBE_BW;
+                printf("probe_bw!\n");
+                break;
+            }
+        }
+    }
+
+    // Выполняем текущий режим
+    switch (state->current_mode) {
+    case MODE_START_PROBE:
+        printf("probe_start raw!\n");
+        return start_probe(state);
+    case MODE_PROBE_BW:
+        printf("probe_bw raw!\n");
+        return prob_bw(ack, state);
+    case MODE_PROBE_RTT:
+        printf("probe_rtt raw!\n");
+        return prob_rtt(ack, state);
+    case MODE_DRAIN_PROBE:
+        printf("drain_probe raw!\n");
+        return drain_probe(state);
+    default:
+        printf("probe_bw fallback!\n");
+        return prob_bw(ack, state);
+    }
+}
+
 
 
 u32 inline SplineCC(u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
@@ -328,25 +417,30 @@ u32 inline SplineCC(u32 curr_rtt, u64 throughput, u32 num_acks, sCC* state)
         state->last_max_cwnd = state->curr_cwnd;
 
     u32 prev_cwnd = state->curr_cwnd;
-    u32 prev_rtt = state->curr_rtt;
-    ratio_rtt(curr_rtt, state);
-    ratio_cwnd(state);
-    ratio_bw(throughput, state);
 
-
-
+    __epsilone_rtt(curr_rtt, num_acks, state);
+    __bw(throughput, state);
+    __gamma_ack(state);
     u32 slow_start_cwnd = handle_slow_start(state, num_acks);
 
+    state->last_cwnd = prev_cwnd;
     if (slow_start_cwnd)
     {
         state->next_cwnd = slow_start_cwnd;
-        state->last_cwnd = prev_cwnd;
-        state->last_rtt = prev_rtt;
+        return state->next_cwnd;
+    }
+    state->next_cwnd = probs(num_acks, state);
+    if (state->bw <= state->curr_cwnd && state->current_mode == MODE_PROBE_BW)
+    {
+        state->next_cwnd = state->bw;
         return state->next_cwnd;
     }
 
-    state->next_cwnd = resolve_next_cwnd(num_acks, state);
-    state->last_cwnd = prev_cwnd;
-    state->last_rtt = prev_rtt;
+    if (state->bw <= state->curr_cwnd && state->current_mode == MODE_PROBE_RTT)
+    {
+        state->next_cwnd = state->bw + (state->curr_cwnd >> 2);
+        return state->next_cwnd;
+    }
+
     return state->next_cwnd;
 }
