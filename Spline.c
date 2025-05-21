@@ -6,8 +6,8 @@
 #define DIV3(x) (((x) * 171) >> 9) 
 #define DIV100(x) (((x) * 3) >> 8) 
 #define U32_MAX (~0U)               
-#define MAX_RTT 1000000                             // 1 с в микросекундах
-#define MIN_RTT 1                                   // 10 мкс                                        
+#define MAX_RTT 1000                            
+#define MIN_RTT 1                                                                         
 #define MAX_SSHTHRESH 900000                        // 10Gbit/s = 856 184 (MSS)
 #define MULT0_9(x) ((x * 15) >> 4)
 #define MAX_CWND MAX_SSHTHRESH                      // Добавлено: максимальное значение для cwnd
