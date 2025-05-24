@@ -139,6 +139,12 @@ SpineCC — это алгоритм управления перегрузкой,
 
 Ниже приведены результаты сравнения по ключевым метрикам и графики.
 
+## График SplineCC и BBR в одном канале (Fairness):
+![bbr_spline_fairness](https://github.com/user-attachments/assets/08e78ae5-a64d-47c0-bde0-9d5bf640bf0b)
+
+## График SplineCC и BBR в разных каналах:
+![bbr_spline_2bw](https://github.com/user-attachments/assets/a2f535b4-b3ca-49bb-8c51-86a9d45a12eb)
+
 
 ## Результаты сравнения
 
