@@ -23,7 +23,7 @@ SplineCcNew::SplineCcNew()
       m_state{0}
 {
     NS_LOG_FUNCTION(this);
-    m_state.last_rtt = 100; // 100 мс
+    m_state.last_rtt = 50; // 100 мс
     m_state.last_min_rtt = 10;
     m_state.curr_cwnd = 10 * 1448; // Начальное окно 10 MSS
     m_state.last_cwnd = m_state.curr_cwnd;
@@ -46,7 +46,7 @@ uint32_t
 SplineCcNew::GetSsThresh(Ptr<const TcpSocketState> tcb, uint32_t bytesInFlight)
 {
     NS_LOG_FUNCTION(this << tcb << bytesInFlight);
-    uint32_t ssthresh = std::max(m_state.curr_cwnd * 85 / 100, 2 * tcb->m_segmentSize);
+    uint32_t ssthresh = std::max(m_state.curr_cwnd * 14 >> 4, 2 * tcb->m_segmentSize);
     NS_LOG_INFO("CA_LOSS detected, setting ssthresh to " << ssthresh);
     return ssthresh;
 }
@@ -57,7 +57,7 @@ SplineCcNew::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
     NS_LOG_FUNCTION(this << tcb << segmentsAcked);
     uint32_t curr_rtt = tcb->m_lastRtt.Get().GetMicroSeconds();
     if (curr_rtt == 0) curr_rtt = 1; // MIN_RTT = 1 мс
-    uint64_t throughput = tcb->m_bytesInFlight * 1000000 / (curr_rtt ? curr_rtt : 1000);
+    uint64_t throughput = tcb->m_bytesInFlight << 20 / (curr_rtt ? curr_rtt : 1000);
 
     if (m_state.curr_cwnd == 0)
     {
@@ -73,9 +73,9 @@ SplineCcNew::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
     else if (tcb->m_congState == TcpSocketState::CA_RECOVERY)
     {
         // Быстрое восстановление: увеличиваем cwnd на 3 * MSS за ACK
-        m_state.curr_cwnd += 3 * segmentsAcked * tcb->m_segmentSize;
-        if (m_state.curr_cwnd > m_state.last_max_cwnd * 2) // Увеличен лимит
-            m_state.curr_cwnd = m_state.last_max_cwnd * 2;
+        m_state.curr_cwnd += segmentsAcked * tcb->m_segmentSize << 2;
+        if (m_state.curr_cwnd > m_state.last_max_cwnd << 1) // Увеличен лимит
+            m_state.curr_cwnd = m_state.last_max_cwnd << 1;
         NS_LOG_INFO("CA_RECOVERY: cwnd increased to " << m_state.curr_cwnd);
     }
     else
@@ -112,7 +112,7 @@ SplineCcNew::SplineCCAlgo(Ptr<TcpSocketState> tcb, uint32_t curr_rtt, uint64_t t
     }
 
     // Если был CA_LOSS, сохраняем MODE_DRAIN_PROBE до стабилизации RTT
-    if (m_state.current_mode == MODE_DRAIN_PROBE && curr_rtt < m_state.last_min_rtt * 2)
+    if (m_state.current_mode == MODE_DRAIN_PROBE && curr_rtt < m_state.last_min_rtt << 1)
     {
         m_state.current_mode = MODE_PROBE_BW;
         NS_LOG_INFO("Exiting MODE_DRAIN_PROBE, switching to MODE_PROBE_BW");
@@ -131,8 +131,8 @@ SplineCcNew::__epsilone_rtt(uint32_t rtt, uint32_t ack)
     if (rtt == 0) rtt = 1; // MIN_RTT = 1 мс
     m_state.last_ack = m_state.curr_ack;
     m_state.curr_ack = ack;
-    if (m_state.last_rtt < 100)
-        m_state.last_rtt = 100;
+    if (m_state.last_rtt < 1)
+        m_state.last_rtt = 1;
 
     m_state.eps = ((rtt + m_state.curr_rtt) / (rtt ? rtt : 1)) + 1;
     if (m_state.eps > 4) m_state.eps = 4;
@@ -207,7 +207,7 @@ SplineCcNew::fairness_rtt_bw(Ptr<TcpSocketState> tcb)
 {
     if (m_state.gamma == 1)
     {
-        m_state.curr_cwnd = m_state.curr_cwnd * 85 / 100; // Смягчённое сокращение
+        m_state.curr_cwnd = m_state.curr_cwnd * 14 >> 4; // Смягчённое сокращение
         if (m_state.curr_cwnd < tcb->m_segmentSize) m_state.curr_cwnd = tcb->m_segmentSize;
         return m_state.curr_cwnd;
     }
@@ -219,9 +219,9 @@ SplineCcNew::overload_rtt_bw(uint32_t ack, Ptr<TcpSocketState> tcb)
 {
     if (m_state.gamma <= 1)
     {
-        m_state.curr_cwnd = m_state.last_cwnd * 85 / 100;
+        m_state.curr_cwnd = m_state.last_cwnd * 14 >> 4;
         if (ack <= m_state.last_ack)
-            m_state.curr_cwnd = m_state.curr_cwnd * 85 / 100;
+            m_state.curr_cwnd = m_state.curr_cwnd * 14 >> 4;
         if (m_state.curr_cwnd < tcb->m_segmentSize) m_state.curr_cwnd = tcb->m_segmentSize;
         return m_state.curr_cwnd;
     }
@@ -258,8 +258,8 @@ SplineCcNew::overload_rtt(uint32_t ack, Ptr<TcpSocketState> tcb)
     if (m_state.eps == 2 && m_state.gamma <= 3)
     {
         m_state.curr_cwnd = m_state.last_cwnd;
-        if (ack < m_state.last_ack * 3 / 4)
-            m_state.curr_cwnd = m_state.curr_cwnd - 85 / 100;
+        if (ack < m_state.last_ack * 12 >> 4)
+            m_state.curr_cwnd = m_state.curr_cwnd - (14 >> 4);
         if (m_state.curr_cwnd < tcb->m_segmentSize) m_state.curr_cwnd = tcb->m_segmentSize;
         return m_state.curr_cwnd;
     }
@@ -271,7 +271,7 @@ SplineCcNew::fairness_rtt(Ptr<TcpSocketState> tcb)
 {
     if (m_state.eps == 2 && m_state.gamma == 4)
     {
-        m_state.curr_cwnd = m_state.curr_cwnd * 85 / 100;
+        m_state.curr_cwnd = m_state.curr_cwnd * 14 >> 4;
         if (m_state.curr_cwnd < tcb->m_segmentSize) m_state.curr_cwnd = tcb->m_segmentSize;
         return m_state.curr_cwnd;
     }
@@ -296,7 +296,7 @@ SplineCcNew::drain_probe(Ptr<TcpSocketState> tcb)
     if (m_state.curr_cwnd > m_state.bw * tcb->m_segmentSize)
         m_state.curr_cwnd = m_state.bw * tcb->m_segmentSize;;
     if (m_state.curr_cwnd < tcb->m_segmentSize) m_state.curr_cwnd = tcb->m_segmentSize;
-    m_state.curr_cwnd = m_state.curr_cwnd * 90 / 100;
+    m_state.curr_cwnd = m_state.curr_cwnd * 12 >> 4;
     return m_state.curr_cwnd;
 }
 
@@ -315,7 +315,7 @@ SplineCcNew::pacing_gain_rate(Ptr<TcpSocketState> tcb)
     pacing_gain = std::min(std::max(pacing_gain, 1U), 4U);
     m_state.pacing_rate = m_state.bw * tcb->m_segmentSize * pacing_gain * m_state.last_min_rtt / 1000; // Увеличен коэффициент
     if (m_state.current_mode == MODE_PROBE_RTT)
-        m_state.pacing_rate = m_state.pacing_rate * 85 / 100;
+        m_state.pacing_rate = m_state.pacing_rate * 14 >> 4;
     NS_LOG_INFO("pacing_gain=" << pacing_gain << ", pacing_rate=" << m_state.pacing_rate);
     return m_state.pacing_rate;
 }
@@ -327,7 +327,7 @@ SplineCcNew::cwnd_next_gain(Ptr<TcpSocketState> tcb)
     cwnd_gain = std::min(std::max(cwnd_gain, 1U), 4U); // Увеличен максимум
     m_state.curr_cwnd = cwnd_gain * m_state.bw * tcb->m_segmentSize; // Более агрессивный рост
     if (m_state.curr_cwnd < m_state.last_cwnd)
-        m_state.curr_cwnd = m_state.last_cwnd * 85 / 100;
+        m_state.curr_cwnd = m_state.last_cwnd * 14 >> 4;
     if (m_state.curr_cwnd < tcb->m_segmentSize) m_state.curr_cwnd = tcb->m_segmentSize;
     NS_LOG_INFO("cwnd_gain=" << cwnd_gain << ", curr_cwnd=" << m_state.curr_cwnd);
     return m_state.curr_cwnd;
@@ -347,7 +347,7 @@ SplineCcNew::probs(uint32_t ack, Ptr<TcpSocketState> tcb)
         return start_probe(tcb);
     }
 
-    if (m_state.eps == 1 || m_state.gamma == 1 && m_state.curr_rtt > (m_state.last_rtt * 2)) { // Увеличен порог
+    if (m_state.eps == 1 || m_state.gamma == 1 && m_state.curr_rtt > (m_state.last_rtt << 1)) { // Увеличен порог
         NS_LOG_INFO("Entering MODE_DRAIN_PROBE due to high RTT");
         m_state.current_mode = MODE_DRAIN_PROBE;
         return drain_probe(tcb);
@@ -421,3 +421,4 @@ SplineCcNew::Fork()
 }
 
 } // namespace ns3
+
