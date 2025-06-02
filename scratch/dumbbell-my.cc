@@ -1,20 +1,3 @@
-/*
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation;
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- *
- * Author: George F. Riley<riley@ece.gatech.edu>
- */
-
 #include "ns3/applications-module.h"
 #include "ns3/core-module.h"
 #include "ns3/internet-module.h"
@@ -36,7 +19,7 @@ static void CwndTracer(Ptr<OutputStreamWrapper> stream, uint32_t oldval, uint32_
 }
 
 static void RttTracer(Ptr<OutputStreamWrapper> stream, Time oldval, Time newval){
-    *stream->GetStream() << Simulator::Now().GetSeconds() << " " << newval.GetSeconds() << std::endl;
+    *stream->GetStream() << Simulator::Now().GetSeconds() << " " << newval.GetMilliSeconds() << std::endl;
 }
 
 static void RtoTracer(Ptr<OutputStreamWrapper> stream, Time oldval, Time newval){
@@ -57,6 +40,14 @@ static void BytesInQueueTrace(Ptr<OutputStreamWrapper> stream, uint32_t oldVal, 
 
 static void NextTxTracer(Ptr<OutputStreamWrapper> stream, SequenceNumber32 oldval, SequenceNumber32 newval){
     *stream->GetStream() << Simulator::Now().GetSeconds() << " " << newval << std::endl;
+}
+
+static void PacingRateTracer(Ptr<OutputStreamWrapper> stream, DataRate oldval, DataRate newval){
+    *stream->GetStream() << Simulator::Now().GetSeconds() << " " << newval.GetBitRate() / 1e6 << std::endl;
+}
+
+static void RxTracer(Ptr<OutputStreamWrapper> stream, Ptr<const Packet> packet, const Address &from){
+    *stream->GetStream() << Simulator::Now().GetSeconds() << " " << packet->GetSize() << std::endl;
 }
 
 void TraceCwnd(std::string file_name, uint16_t nodeId){
@@ -93,6 +84,18 @@ void TraceNextTx(std::string file_name, uint16_t nodeId){
     AsciiTraceHelper ascii;
     Ptr<OutputStreamWrapper> stream = ascii.CreateFileStream(file_name);
     Config::ConnectWithoutContext("/NodeList/"+std::to_string(nodeId)+"/$ns3::TcpL4Protocol/SocketList/0/NextTxSequence", MakeBoundCallback(&NextTxTracer, stream));
+}
+
+void TracePacingRate(std::string file_name, uint16_t nodeId){
+    AsciiTraceHelper ascii;
+    Ptr<OutputStreamWrapper> stream = ascii.CreateFileStream(file_name);
+    Config::ConnectWithoutContext("/NodeList/"+std::to_string(nodeId)+"/$ns3::TcpL4Protocol/SocketList/0/PacingRate", MakeBoundCallback(&PacingRateTracer, stream));
+}
+
+void TraceRx(std::string file_name, uint16_t nodeId){
+    AsciiTraceHelper ascii;
+    Ptr<OutputStreamWrapper> stream = ascii.CreateFileStream(file_name);
+    Config::ConnectWithoutContext("/NodeList/"+std::to_string(nodeId)+"/ApplicationList/0/$ns3::PacketSink/Rx", MakeBoundCallback(&RxTracer, stream));
 }
 
 static void TraceThroughput(Ptr<FlowMonitor> monitor, std::vector<Ptr<OutputStreamWrapper>> stream, std::vector<uint64_t> prev){
@@ -135,23 +138,14 @@ int main(int argc, char* argv[]){
     std::string leafDelay = "10ms";
     std::string queueDisc = "ns3::PfifoFastQueueDisc";
     double queueSize = 1.5;
-    std::vector<std::string> tcpVariant = {"ns3::TcpBbr", "ns3::TcpCubic"}; // "ns3::TcpCubic" "ns3::TcpBbr" "ns3::TcpBic"
+    std::vector<std::string> tcpVariant = {"ns3::TcpBbr", "ns3::SplineCcNew"};
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("nLeaf", "Number of left and right side leaf nodes", nLeaf);
     cmd.Parse(argc, argv);
 
-    // Create a new directory to store the output of the program
-    time_t rawtime;
-    struct tm * timeinfo;
-    char buffer[80];
-    time (&rawtime);
-    timeinfo = localtime(&rawtime);
-    strftime(buffer,sizeof(buffer),"%d-%m-%Y-%I-%M-%S",timeinfo);
-    std::string currentTime (buffer);
-    std::string dir = "bbr-results/" + currentTime + "/";
-    std::string dirToSave = "mkdir -p " + dir;
-    if (system(dirToSave.c_str()) == -1){exit(1);}
+    // Set output directory
+    std::string dir = "/home/ns3/NS3-bbr/build/";
     AsciiTraceHelper ascii;
     Ptr<OutputStreamWrapper> logStream = ascii.CreateFileStream(dir + "log.txt");
 
@@ -169,7 +163,7 @@ int main(int argc, char* argv[]){
         Config::SetDefault("ns3::DropTailQueue<Packet>::MaxSize", QueueSizeValue(QueueSize(PACKETS, queueSize/packetSize)));
     }
     *logStream->GetStream() << "QueueDisc: " << queueDisc << " MaxSize: " << queueSize/packetSize << std::endl;
-    
+
     // Here we use RateErrorModel with packet error rate
     Ptr<UniformRandomVariable> uv = CreateObject<UniformRandomVariable>();
     uv->SetStream(50);
@@ -179,12 +173,11 @@ int main(int argc, char* argv[]){
     error_model.SetRate(errorRate);
     *logStream->GetStream() << "ErrorRate: " << errorRate << std::endl;
 
-
     // Create the point-to-point link helpers
     PointToPointHelper pointToPointRouter;
     pointToPointRouter.SetDeviceAttribute("DataRate", StringValue(routerRate));
     pointToPointRouter.SetChannelAttribute("Delay", StringValue(routerDelay));
-    pointToPointRouter.SetDeviceAttribute ("ReceiveErrorModel", PointerValue (&error_model));
+    pointToPointRouter.SetDeviceAttribute("ReceiveErrorModel", PointerValue(&error_model));
     PointToPointHelper pointToPointLeaf;
     pointToPointLeaf.SetDeviceAttribute("DataRate", StringValue(leafRate));
     pointToPointLeaf.SetChannelAttribute("Delay", StringValue(leafDelay));
@@ -209,8 +202,8 @@ int main(int argc, char* argv[]){
     // Set up congestion control
     for (uint16_t i = 0; i < Min(tcpVariant.size(), nLeaf); i++){
         std::stringstream nodeId;
-        nodeId << d.GetLeft(i)->GetId ();
-        std::string node = "/NodeList/" + nodeId.str () + "/$ns3::TcpL4Protocol/SocketType";
+        nodeId << d.GetLeft(i)->GetId();
+        std::string node = "/NodeList/" + nodeId.str() + "/$ns3::TcpL4Protocol/SocketType";
         TypeId tid = TypeId::LookupByName(tcpVariant[i]);
         Config::Set(node, TypeIdValue(tid));
         *logStream->GetStream() << "Node: " << nodeId.str() << " TcpVariant: " << tcpVariant[i] << std::endl;
@@ -225,7 +218,7 @@ int main(int argc, char* argv[]){
         AddressValue remoteAddress(InetSocketAddress(d.GetRightIpv4Address(i), port));
         source.SetAttribute("Remote", remoteAddress);
         sourceApps.Add(source.Install(d.GetLeft(i)));
-    } 
+    }
     sourceApps.Start(Seconds(startTime));
     sourceApps.Stop(Seconds(stopTime));
 
@@ -245,13 +238,17 @@ int main(int argc, char* argv[]){
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
     // Schedule tracing
+    std::vector<std::string> protocolNames = {"bbr", "spline"};
     for(uint16_t i = 0; i < nLeaf; i++){
-        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TraceInflight, dir + "inflight-" + tcpVariant[i].substr(8) + "-" + std::to_string(i) + ".dat", i+2);
-        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TraceCwnd, dir + "cwnd-" + tcpVariant[i].substr(8) + "-" + std::to_string(i) + ".dat", i+2);
-        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TraceRtt, dir + "rtt-" + tcpVariant[i].substr(8) + "-" + std::to_string(i) + ".dat", i+2);
-        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TraceRto, dir + "rto-" + tcpVariant[i].substr(8) + "-" + std::to_string(i) + ".dat", i+2);
-        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TraceSsThresh, dir + "ssthresh-" + tcpVariant[i].substr(8) + "-" + std::to_string(i) + ".dat", i+2);
-        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TraceNextTx, dir + "nexttx-" + tcpVariant[i].substr(8) + "-" + std::to_string(i) + ".dat", i+2);
+        std::string prefix = protocolNames[i];
+        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TraceCwnd, dir + prefix + "_cwnd_trace.txt", i+2);
+        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TraceRtt, dir + prefix + "_rtt_trace.txt", i+2);
+        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TracePacingRate, dir + prefix + "_pacing_rate_trace.txt", i+2);
+        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TraceRx, dir + prefix + "_rx_trace.txt", d.GetRight(i)->GetId());
+        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TraceInflight, dir + prefix + "_inflight_trace.txt", i+2);
+        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TraceRto, dir + prefix + "_rto_trace.txt", i+2);
+        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TraceSsThresh, dir + prefix + "_ssthresh_trace.txt", i+2);
+        Simulator::Schedule(Seconds(startTime) + NanoSeconds(1), &TraceNextTx, dir + prefix + "_nexttx_trace.txt", i+2);
     }
 
     // Schedule throughput and packet loss tracing
@@ -260,29 +257,30 @@ int main(int argc, char* argv[]){
     std::vector<Ptr<OutputStreamWrapper>> throughputStreams;
     std::vector<Ptr<OutputStreamWrapper>> packetLossStreams;
     for(uint16_t i = 0; i < nLeaf*2; i++){
-        throughputStreams.push_back(ascii.CreateFileStream(dir + "throughput-" + tcpVariant[i%nLeaf].substr(8) + "-" + std::to_string(i) + ".dat"));
-        packetLossStreams.push_back(ascii.CreateFileStream(dir + "packetLoss-" + tcpVariant[i%nLeaf].substr(8) + "-" + std::to_string(i) + ".dat"));
+        std::string prefix = protocolNames[i % nLeaf];
+        throughputStreams.push_back(ascii.CreateFileStream(dir + prefix + "_throughput_trace-" + std::to_string(i) + ".txt"));
+        packetLossStreams.push_back(ascii.CreateFileStream(dir + prefix + "_packetloss_trace-" + std::to_string(i) + ".txt"));
     }
     Simulator::Schedule(Seconds(startTime), &TraceThroughput, monitor, throughputStreams, std::vector<uint64_t>());
     Simulator::Schedule(Seconds(startTime), &TracePacketLoss, monitor, packetLossStreams, std::vector<uint32_t>());
 
     // Schedule queue size tracing
     Ptr<Queue<Packet>> queue = StaticCast<PointToPointNetDevice>(d.GetRouterDevice().Get(0))->GetQueue();
-    Ptr<OutputStreamWrapper> queueSizeStream = ascii.CreateFileStream(dir + "queueSize.dat");
+    Ptr<OutputStreamWrapper> queueSizeStream = ascii.CreateFileStream(dir + "queue_size_trace.txt");
     queue->TraceConnectWithoutContext("BytesInQueue", MakeBoundCallback(&BytesInQueueTrace, queueSizeStream));
 
     // Run simulation
     std::cout << "Running" << std::endl;
     Simulator::Schedule(Seconds(startTime+10), &TraceTime);
-    Simulator::Stop(Seconds(stopTime) + TimeStep(1));    
+    Simulator::Stop(Seconds(stopTime) + TimeStep(1));
     Simulator::Run();
     Simulator::Destroy();
 
-    // flow monitor output
-    flowmon.SerializeToXmlFile(dir + "flowmonitor.xml", true, true);
+    // Flow monitor output
+    flowmon.SerializeToXmlFile(dir + "bbr_spline.flowmon", true, true);
     FlowMonitor::FlowStatsContainer stats = monitor->GetFlowStats();
-    for(std::map<FlowId, FlowMonitor::FlowStats>::const_iterator i = stats.begin (); i != stats.end (); ++i){
-        *logStream->GetStream() << "Flow: " << i->first << " Throughtput: " << ((double) i->second.rxBytes * 8.0) / (double) (i->second.timeLastRxPacket.GetSeconds () - i->second.timeFirstTxPacket.GetSeconds ()) / 1024 / 1024 << std::endl;
+    for(std::map<FlowId, FlowMonitor::FlowStats>::const_iterator i = stats.begin(); i != stats.end(); ++i){
+        *logStream->GetStream() << "Flow: " << i->first << " Throughput: " << ((double) i->second.rxBytes * 8.0) / (double) (i->second.timeLastRxPacket.GetSeconds() - i->second.timeFirstTxPacket.GetSeconds()) / 1024 / 1024 << std::endl;
     }
     return 0;
 }
