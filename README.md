@@ -1,213 +1,139 @@
-# The Network Simulator, Version 3
+# SplineCC: Адаптивный алгоритм управления перегрузкой TCP
 
-[![codecov](https://codecov.io/gh/nsnam/ns-3-dev-git/branch/master/graph/badge.svg)](https://codecov.io/gh/nsnam/ns-3-dev-git/branch/master/)
-[![Gitlab CI](https://gitlab.com/nsnam/ns-3-dev/badges/master/pipeline.svg)](https://gitlab.com/nsnam/ns-3-dev/-/pipelines)
-[![Github CI](https://github.com/nsnam/ns-3-dev-git/actions/workflows/per_commit.yml/badge.svg)](https://github.com/nsnam/ns-3-dev-git/actions)
+## Обзор
+SplineCC — это передовой алгоритм управления перегрузкой TCP, реализованный на языке C (`SplineCcNew.cc`) в среде симулятора NS-3. Алгоритм разработан для оптимизации производительности сетей с переменными условиями, такими как высокие потери пакетов, задержки и изменяющаяся пропускная способность. SplineCC сочетает элементы bandwidth-delay-based (подобно BBR) и loss-based (подобно CUBIC) подходов, используя четыре адаптивных режима работы: `START_PROBE`, `PROBE_BW`, `PROBE_RTT` и `DRAIN_PROBE`. Он подходит для высокоскоростных WAN, беспроводных сетей и сценариев с интенсивным трафиком, а также представляет интерес для исследователей и разработчиков сетевых протоколов.
 
-## Table of Contents
+SplineCC демонстрирует выдающуюся производительность, превосходя BBR в условиях высоких потерь (до 10%) и стабильных задержек, как показано в тестах NS-3. Алгоритм оптимизирован для работы как в одиночных потоках, так и в конкурентных сценариях.
 
-* [Overview](#overview-an-open-source-project)
-* [Building ns-3](#building-ns-3)
-* [Testing ns-3](#testing-ns-3)
-* [Running ns-3](#running-ns-3)
-* [ns-3 Documentation](#ns-3-documentation)
-* [Working with the Development Version of ns-3](#working-with-the-development-version-of-ns-3)
-* [Contributing to ns-3](#contributing-to-ns-3)
-* [Reporting Issues](#reporting-issues)
-* [ns-3 App Store](#ns-3-app-store)
+## Особенности
+- **Многорежимная адаптация**:
+  - `START_PROBE`: Быстро увеличивает окно перегрузки (`cwnd`) для захвата доступной полосы на начальном этапе.
+  - `PROBE_BW`: Настраивает `cwnd` на основе оценённой пропускной способности (`bw`) с использованием экспоненциального скользящего среднего (EMA).
+  - `PROBE_RTT`: Минимизирует задержки, корректируя `cwnd` для измерения минимального RTT.
+  - `DRAIN_PROBE`: Уменьшает избыточное окно при обнаружении перегрузки (рост RTT или снижение ACK).
+- **Оценка состояния сети**: Использует метрики `eps` (на основе RTT, обновляет минимальный RTT за период эпохи) и `fairness_rat` (на основе ACK и `cwnd`) для динамической адаптации.
+- **Управление перегрузкой**: Переходит в режим избегания перегрузки при достижении потерь или переполнение буффер inflight.
+- **Pacing & fairness_rat**: Регулирует скорость отправки пакетов для сглаживания трафика и предотвращения перегрузки.
+- **Оптимизация**: Минимизирует вычислительные затраты за счёт целочисленных операций и сдвигов.
 
-> **NOTE**: Much more substantial information about ns-3 can be found at
-<https://www.nsnam.org>
+## Технические детали
+### Вычисления
+Функция `SplineCCAlgo` вычисляет следующее окно перегрузки (`next_cwnd`) на основе параметров: `curr_rtt`, `throughput`, `num_acks` и структуры состояния `m_state`. Пример вычислений:
+- Входные данные: `curr_rtt = 12` мс, `throughput = 125000000` байт/с, `num_acks = 10`.
+- Начальное состояние: `last_min_rtt = 100` мс, `last_cwnd = 10`, `curr_cwnd = 64`, `bw = 0`.
 
-## Overview: An Open Source Project
+#### Пошаговый процесс:
+1. **Обновление RTT (`__epsilone_rtt`)**:
+   - `last_min_rtt = min(last_min_rtt, curr_rtt) = 12` мс.
+   - Увеличивает `epp_min_rtt`, если обнаружен новый минимум.
+2. **Оценка пропускной способности (`__bw`)**:
+   - `bw = (curr_ack * segmentSize) / minRtt = (10 * 1460) / 0.012 ≈ 1,216,667` байт/с.
+   - Применяется EMA: `last_bw = (last_bw * 3 + bw) >> 2 ≈ 304,167` байт/с.
+   - Фильтрация: `bw` ограничено 75–150% от `last_bw`.
+3. **Режимы работы (`probs`)**:
+   - `START_PROBE`: `curr_cwnd += num_acks = 64 + 10 = 74`.
+   - `PROBE_BW`: `curr_cwnd = max(bw / segmentSize, curr_cwnd) ≈ 208`.
+   - `PROBE_RTT`: `curr_cwnd = bw / segmentSize + (num_acks >> 2) ≈ 210`.
+   - `DRAIN_PROBE`: `curr_cwnd = curr_cwnd * 0.75 ≈ 156`.
+4. **Pacing (`pacing_gain_rate`)**:
+   - `pacing_rate = bw * fairness_rat * minRtt ≈ 1,216,667 * 2 * 0.012 ≈ 29,200,008` байт/с.
 
-ns-3 is a free open source project aiming to build a discrete-event
-network simulator targeted for simulation research and education.
-This is a collaborative project; we hope that
-the missing pieces of the models we have not yet implemented
-will be contributed by the community in an open collaboration
-process. If you would like to contribute to ns-3, please check
-the [Contributing to ns-3](#contributing-to-ns-3) section below.
+#### Результат:
+- `next_cwnd = 208` сегментов, `pacing_rate ≈ 29.2 Мбит/с`.
 
-This README excerpts some details from a more extensive
-tutorial that is maintained at:
-<https://www.nsnam.org/documentation/latest/>
+### Режимы переключения
+- Переключение между режимами происходит каждые 9 эпох (`epp == 9`) или при перегрузке (RTT > 2 * `last_min_rtt`или `fairness_rat < 2`).
 
-## Building ns-3
+## Установка
+Для использования SplineCC требуется NS-3 (версия 3.36 или выше) с установленными зависимостями.
 
-The code for the framework and the default models provided
-by ns-3 is built as a set of libraries. User simulations
-are expected to be written as simple programs that make
-use of these ns-3 libraries.
+1. Клонируйте репозиторий:
+   ```bash
+   git clone https://github.com/Kaibek/SplineCC.git
+   cd SplineCC
+   ```
+2. Скомпилируйте NS-3 с поддержкой SplineCC:
+   ```bash
+   ./waf configure --enable-examples --enable-tests
+   ./waf build
+   ```
+3. Интегрируйте `SplineCcNew.cc` в проект NS-3, добавив его в `src/internet/model/` и обновив `wscript`.
 
-To build the set of default libraries and the example
-programs included in this package, you need to use the
-`ns3` tool. This tool provides a Waf-like API to the
-underlying CMake build manager.
-Detailed information on how to use `ns3` is included in the
-[quick start guide](doc/installation/source/quick-start.rst).
+## Использование
+### Интеграция в NS-3
+1. `SplineCcNew` уже находится в конфигурации TCP
 
-Before building ns-3, you must configure it.
-This step allows the configuration of the build options,
-such as whether to enable the examples, tests and more.
+2. Инициализируйте симуляцию с вашими параметрами (например, `errorRate = 0.1`, `routerRate = 500Mbps`). Имеется уже тестовый файл:
+   ```bash
+   nano scratch/dumbbell-my.cc
+   ```
 
-To configure ns-3 with examples and tests enabled,
-run the following command on the ns-3 main directory:
+### Пример кода
+```cpp
+#include "ns3/core-module.h"
+#include "ns3/internet-module.h"
+#include "ns3/spline-cc.h"
 
-```shell
-./ns3 configure --enable-examples --enable-tests
+int main() {
+    NodeContainer nodes;
+    nodes.Create(2);
+    InternetStackHelper stack;
+    stack.Install(nodes);
+    Config::SetDefault("ns3::TcpSocket::CongestionAlgo", StringValue("ns3::SplineCcNew"));
+    // Настройка сети и приложений...
+    Simulator::Run();
+    Simulator::Destroy();
+    return 0;
+}
 ```
 
-Then, build ns-3 by running the following command:
+## Тестирование
+### Рекомендации
+1. **Симуляция в NS-3**:
+   - Тестируйте с разными `errorRate` (0.01%, 5%, 10%) и `routerDelay` (10 мс, 80 мс, 500 мс).
+   - Используйте `FlowMonitor` для анализа пропускной способности, RTT и потерь.
+2. **Реальные тесты**:
+   - Интегрируйте в Linux TCP stack (например, через `tc` или модули ядра) и протестируйте в реальной сети.
+3. **Краевые случаи**:
+   - Проверяйте поведение при `curr_rtt > 1s`, `num_acks = 0` или высоких потерях (>20%).
+4. **Запуск симуляции**
+   - достаточно перейти в дирректорию `SplineCC/build` и запуск теста `./scratch/ns3.40-dumbbell-my-default`
 
-```shell
-./ns3 build
+### Пример сценария NS-3
+```cpp
+uint32_t nLeaf = 2;
+double errorRate = 0.1;
+std::string routerRate = "500Mbps";
+std::string routerDelay = "80ms";
+PointToPointHelper pointToPoint;
+pointToPoint.SetDeviceAttribute("DataRate", StringValue(routerRate));
+pointToPoint.SetChannelAttribute("Delay", StringValue(routerDelay));
+NetDeviceContainer devices = pointToPoint.Install(nodes);
+Ipv4AddressHelper address;
+address.SetBase("10.1.1.0", "255.255.255.0");
+Ipv4InterfaceContainer interfaces = address.Assign(devices);
 ```
 
-By default, the build artifacts will be stored in the `build/` directory.
+## Сравнение с другими алгоритмами
+SplineCCNew протестирован в NS-3 в двух сценариях:
+1. **Один канал**: Один поток на 500 Мбит/с, 80 мс задержка, 10% потерь.
+2. **Разные каналы**: Сравнение с BBR при 10,000 Мбит/с, 50 мс RTT, 0.01% потерь.
 
-### Supported Platforms
+### Результаты
+#### Один канал
+- **Пропускная способность**: `SplineCcNew` — (0.25 - 0.26) Мбит/с, BBR — (0.02 - 0.01) Мбит/с (12.5x лучше).
+- **RTT**: `SplineCcNew` — 200-300 мс (стабильный), BBR — до 3000 - 450 мс (начало).
+- **Задержка**: `SplineCcNew` — 10 мс, BBR — 10.5 мс.
+- **Потери**: `SplineCcNew` — 9.83%, BBR — 8.21%.
+- **Вывод**: `SplineCcNew` превосходит BBR в условиях высоких потерь благодаря стабильному `cwnd` и pacing.
 
-The current codebase is expected to build and run on the
-set of platforms listed in the [release notes](RELEASE_NOTES.md)
-file.
+### Графики
+- **[Один канал]**: [Throughput, CWND, RTT, Delay, Interruptions, Pacing]
+![image](https://github.com/user-attachments/assets/7285f39b-2851-468a-95d2-77fddf18d75e)
 
-Other platforms may or may not work: we welcome patches to
-improve the portability of the code to these other platforms.
 
-## Testing ns-3
+## Автор
+**Калимоллаев Бекжан**
 
-ns-3 contains test suites to validate the models and detect regressions.
-To run the test suite, run the following command on the ns-3 main directory:
-
-```shell
-./test.py
-```
-
-More information about ns-3 tests is available in the
-[test framework](doc/manual/source/test-framework.rst) section of the manual.
-
-## Running ns-3
-
-On recent Linux systems, once you have built ns-3 (with examples
-enabled), it should be easy to run the sample programs with the
-following command, such as:
-
-```shell
-./ns3 run simple-global-routing
-```
-
-That program should generate a `simple-global-routing.tr` text
-trace file and a set of `simple-global-routing-xx-xx.pcap` binary
-PCAP trace files, which can be read by `tcpdump -n -tt -r filename.pcap`.
-The program source can be found in the `examples/routing` directory.
-
-## Running ns-3 from Python
-
-If you do not plan to modify ns-3 upstream modules, you can get
-a pre-built version of the ns-3 python bindings.
-
-```shell
-pip install --user ns3
-```
-
-If you do not have `pip`, check their documents
-on [how to install it](https://pip.pypa.io/en/stable/installation/).
-
-After installing the `ns3` package, you can then create your simulation python script.
-Below is a trivial demo script to get you started.
-
-```python
-from ns import ns
-
-ns.LogComponentEnable("Simulator", ns.LOG_LEVEL_ALL)
-
-ns.Simulator.Stop(ns.Seconds(10))
-ns.Simulator.Run()
-ns.Simulator.Destroy()
-```
-
-The simulation will take a while to start, while the bindings are loaded.
-The script above will print the logging messages for the called commands.
-
-Use `help(ns)` to check the prototypes for all functions defined in the
-ns3 namespace. To get more useful results, query specific classes of
-interest and their functions e.g., `help(ns.Simulator)`.
-
-Smart pointers `Ptr<>` can be differentiated from objects by checking if
-`__deref__` is listed in `dir(variable)`. To dereference the pointer,
-use `variable.__deref__()`.
-
-Most ns-3 simulations are written in C++ and the documentation is
-oriented towards C++ users. The ns-3 tutorial programs (`first.cc`,
-`second.cc`, etc.) have Python equivalents, if you are looking for
-some initial guidance on how to use the Python API. The Python
-API may not be as full-featured as the C++ API, and an API guide
-for what C++ APIs are supported or not from Python do not currently exist.
-The project is looking for additional Python maintainers to improve
-the support for future Python users.
-
-## ns-3 Documentation
-
-Once you have verified that your build of ns-3 works by running
-the `simple-global-routing` example as outlined in the [running ns-3](#running-ns-3)
-section, it is quite likely that you will want to get started on reading
-some ns-3 documentation.
-
-All of that documentation should always be available from
-the ns-3 website: <https://www.nsnam.org/documentation/>.
-
-This documentation includes:
-
-* a tutorial
-* a reference manual
-* models in the ns-3 model library
-* a wiki for user-contributed tips: <https://www.nsnam.org/wiki/>
-* API documentation generated using doxygen: this is
-  a reference manual, most likely not very well suited
-  as introductory text:
-  <https://www.nsnam.org/doxygen/index.html>
-
-## Working with the Development Version of ns-3
-
-If you want to download and use the development version of ns-3, you
-need to use the tool `git`. A quick and dirty cheat sheet is included
-in the manual, but reading through the Git
-tutorials found in the Internet is usually a good idea if you are not
-familiar with it.
-
-If you have successfully installed Git, you can get
-a copy of the development version with the following command:
-
-```shell
-git clone https://gitlab.com/nsnam/ns-3-dev.git
-```
-
-However, we recommend to follow the GitLab guidelines for starters,
-that includes creating a GitLab account, forking the ns-3-dev project
-under the new account's name, and then cloning the forked repository.
-You can find more information in the [manual](https://www.nsnam.org/docs/manual/html/working-with-git.html).
-
-## Contributing to ns-3
-
-The process of contributing to the ns-3 project varies with
-the people involved, the amount of time they can invest
-and the type of model they want to work on, but the current
-process that the project tries to follow is described in the
-[contributing code](https://www.nsnam.org/developers/contributing-code/)
-website and in the [CONTRIBUTING.md](CONTRIBUTING.md) file.
-
-## Reporting Issues
-
-If you would like to report an issue, you can open a new issue in the
-[GitLab issue tracker](https://gitlab.com/nsnam/ns-3-dev/-/issues).
-Before creating a new issue, please check if the problem that you are facing
-was already reported and contribute to the discussion, if necessary.
-
-## ns-3 App Store
-
-The official [ns-3 App Store](https://apps.nsnam.org/) is a centralized directory
-listing third-party modules for ns-3 available on the Internet.
-
-More information on how to submit an ns-3 module to the ns-3 App Store is available
-in the [ns-3 App Store documentation](https://www.nsnam.org/docs/contributing/html/external.html).
+## Контакты
+Для вопросов и сотрудничества: [bekzhankalimollaev777@gmail.com](mailto:bekzhankalimollaev777@gmail.com).
