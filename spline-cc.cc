@@ -50,7 +50,6 @@ namespace ns3 {
         NS_LOG_FUNCTION(this << tcb << curr_rtt << throughput << num_acks);
         if (!tcb || tcb->m_segmentSize == 0) 
         {
-            tcb->m_cWnd = m_state.curr_cwnd * tcb->m_segmentSize; // Переводим в байты
             NS_LOG_DEBUG("Invalid tcb or segmentSize=0, setting tcb->m_cWnd = " << tcb->m_cWnd);
             return;
         }
@@ -149,7 +148,7 @@ namespace ns3 {
         NS_LOG_FUNCTION(this << tcb);
         if (!tcb || tcb->m_segmentSize == 0)
         {
-            return m_state.curr_cwnd;
+            return 1U;
         }
         if (m_state.fairness_rat >= 2 || (tcb->m_bytesInFlight << 1) < m_state.curr_cwnd)
         {
@@ -165,7 +164,7 @@ namespace ns3 {
         NS_LOG_FUNCTION(this << tcb);
         if (!tcb || tcb->m_segmentSize == 0)
         {
-            return m_state.curr_cwnd;
+            return 1U;
         }
         if (m_state.fairness_rat < 2) {
             m_state.curr_cwnd = m_state.curr_cwnd * 8 >> 4;
@@ -180,7 +179,7 @@ namespace ns3 {
         NS_LOG_FUNCTION(this << tcb);
         if (!tcb || tcb->m_segmentSize == 0)
         {
-            return m_state.curr_cwnd;
+            return 1U;
         }
         if (tcb->m_congState == TcpSocketState::CA_LOSS || tcb->m_bytesInFlight > m_state.curr_cwnd)
         {
@@ -212,7 +211,7 @@ namespace ns3 {
         NS_LOG_FUNCTION(this << tcb);
         if (!tcb || tcb->m_segmentSize == 0)
         {
-            return m_state.curr_cwnd;
+            return 1U;
         }
         if (m_state.fairness_rat >= 2 || (tcb->m_bytesInFlight << 1) < m_state.curr_cwnd)
         {
@@ -228,7 +227,7 @@ namespace ns3 {
         NS_LOG_FUNCTION(this << tcb);
         if (!tcb || tcb->m_segmentSize == 0)
         {
-            return m_state.curr_cwnd;
+            return 1U;
         }
         if (tcb->m_congState == TcpSocketState::CA_LOSS || tcb->m_bytesInFlight > m_state.curr_cwnd)
         {
@@ -248,7 +247,7 @@ namespace ns3 {
         NS_LOG_FUNCTION(this << tcb);
         if (!tcb || tcb->m_segmentSize == 0)
         {
-            return m_state.curr_cwnd;
+            return 1U;
         }
         if (m_state.fairness_rat < 2)
         {
@@ -291,7 +290,7 @@ namespace ns3 {
         NS_LOG_FUNCTION(this << tcb);
         if (!tcb || tcb->m_segmentSize == 0)
         {
-            return m_state.curr_cwnd ? m_state.curr_cwnd : m_state.last_cwnd;
+            return 1U;
         }
         // Увеличиваем cwnd на основе подтвержденных сегментов
         m_state.curr_cwnd += tcb->m_lastAckedSackedBytes / tcb->m_segmentSize;
@@ -332,10 +331,9 @@ namespace ns3 {
         if (m_state.curr_cwnd > tcb->m_cWnd / tcb->m_segmentSize)
             m_state.curr_cwnd = tcb->m_cWnd.Get() / tcb->m_segmentSize;
 
-        m_state.curr_cwnd = std::max(m_state.curr_cwnd, m_state.last_cwnd);
-        const uint32_t MAX_CWND_SEGMENTS = 1000;
-        m_state.curr_cwnd = std::min(m_state.curr_cwnd, m_state.last_max_cwnd);
-        NS_LOG_DEBUG("cwnd_next_gain: m_state.curr_cwnd = " << MAX_CWND_SEGMENTS);
+        uint32_t min_cwnd = tcb->m_initialCWnd >> 2;
+        min_cwnd = min_cwnd ? min_cwnd : 2U;
+        m_state.curr_cwnd = std::max(m_state.curr_cwnd, min_cwnd);
         return m_state.curr_cwnd;
     }
 
@@ -469,7 +467,7 @@ namespace ns3 {
         }
         switch (event) {
         case ns3::TcpSocketState::CA_EVENT_CWND_RESTART:
-            m_state.curr_cwnd = tcb->m_initialCWnd; // Используем начальное значение в сегментах
+            m_state.curr_cwnd = tcb->m_initialCWnd; 
             m_state.current_mode = MODE_START_PROBE;
             NS_LOG_INFO("CwndEvent: CA_EVENT_CWND_RESTART, entering MODE_START_PROBE, curr_cwnd = " << m_state.curr_cwnd);
             break;
