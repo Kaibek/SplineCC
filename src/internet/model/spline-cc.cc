@@ -48,7 +48,7 @@ namespace ns3 {
 
     void SplineCcNew::SplineCCAlgo(Ptr<TcpSocketState> tcb, uint32_t curr_rtt, uint64_t throughput, uint32_t num_acks) {
         NS_LOG_FUNCTION(this << tcb << curr_rtt << throughput << num_acks);
-        if (!tcb || tcb->m_segmentSize == 0) 
+        if (!tcb || tcb->m_segmentSize == 0)
         {
             NS_LOG_DEBUG("Invalid tcb or segmentSize=0, setting tcb->m_cWnd = " << tcb->m_cWnd);
             return;
@@ -92,9 +92,9 @@ namespace ns3 {
         }
         if (tcb->m_minRtt.GetSeconds() == 0) {
             m_state.throughput = 0;
-            m_state.bw = tcb->m_initialCWnd * tcb->m_segmentSize; 
+            m_state.bw = tcb->m_initialCWnd * tcb->m_segmentSize;
         }
-        else 
+        else
         {
             m_state.throughput = tcb->m_bytesInFlight / tcb->m_minRtt.GetSeconds();
             m_state.bw = m_state.curr_ack * tcb->m_segmentSize / tcb->m_minRtt.GetSeconds();
@@ -275,7 +275,7 @@ namespace ns3 {
         if (m_state.curr_cwnd > m_state.bw) {
             m_state.curr_cwnd = m_state.bw;
         }
-        m_state.curr_cwnd = m_state.curr_cwnd * 12 >> 4;
+        m_state.curr_cwnd = m_state.curr_cwnd * 10 >> 4;
         m_state.curr_cwnd = std::max(m_state.curr_cwnd, m_state.min_cwnd);
         return m_state.curr_cwnd;
     }
@@ -287,40 +287,42 @@ namespace ns3 {
         {
             return 1U;
         }
-        // Увеличиваем cwnd на основе подтвержденных сегментов
         m_state.curr_cwnd += tcb->m_lastAckedSackedBytes / tcb->m_segmentSize;
-        // Ограничиваем максимальное значение
-        uint32_t MAX_CWND_SEGMENTS = m_state.fairness_rat * (m_state.bw - (m_state.bw * 14 >> 4)) * (tcb->m_minRtt.GetSeconds() ? 
+
+        uint32_t MAX_CWND_SEGMENTS = m_state.fairness_rat * (m_state.bw - (m_state.bw * 14 >> 4)) * (tcb->m_minRtt.GetSeconds() ?
             tcb->m_minRtt.GetSeconds() : 1);
+
         MAX_CWND_SEGMENTS = MAX_CWND_SEGMENTS ? MAX_CWND_SEGMENTS : m_state.min_cwnd;
-        m_state.curr_cwnd = std::min(m_state.curr_cwnd, MAX_CWND_SEGMENTS);
+        m_state.curr_cwnd = std::max(m_state.curr_cwnd, MAX_CWND_SEGMENTS);
+
         NS_LOG_DEBUG("start_probe: m_state.curr_cwnd = " << m_state.curr_cwnd);
         return m_state.curr_cwnd;
     }
 
-  uint64_t SplineCcNew::pacing_gain_rate(Ptr<TcpSocketState> tcb) 
-  {
-    NS_LOG_FUNCTION(this << tcb);
+    uint64_t SplineCcNew::pacing_gain_rate(Ptr<TcpSocketState> tcb)
+    {
+        NS_LOG_FUNCTION(this << tcb);
 
-    if (m_state.current_mode == MODE_START_PROBE)
-        tcb->m_pacing = false;
+        if (m_state.current_mode == MODE_START_PROBE)
+            tcb->m_pacing = false;
 
-    if (!tcb->m_pacing && m_state.current_mode != MODE_START_PROBE)
-        tcb->m_pacing = true;
+        if (!tcb->m_pacing && m_state.current_mode != MODE_START_PROBE)
+            tcb->m_pacing = true;
 
-    uint32_t pacing_gain = m_state.fairness_rat;
-    m_state.pacing_rate = m_state.bw * pacing_gain * tcb->m_minRtt.GetSeconds();
-    if (m_state.current_mode == MODE_PROBE_RTT) {
-        m_state.pacing_rate = m_state.pacing_rate * 14 >> 4;
+        uint32_t pacing_gain = m_state.fairness_rat;
+        m_state.pacing_rate = m_state.bw * pacing_gain * tcb->m_minRtt.GetSeconds();
+        if (m_state.current_mode == MODE_PROBE_RTT)
+        {
+            m_state.pacing_rate = m_state.pacing_rate * 12 >> 4;
+        }
+        // Минимальная скорость, эквивалентная 1 сегменту в секунду
+        if (m_state.pacing_rate < tcb->m_segmentSize * 8) {
+            m_state.pacing_rate = tcb->m_segmentSize * 8;
+        }
+        tcb->m_pacingRate = DataRate(m_state.pacing_rate);
+        NS_LOG_DEBUG("pacing_rate = " << m_state.pacing_rate << " at time " << Simulator::Now().GetSeconds());
+        return m_state.pacing_rate;
     }
-    // Минимальная скорость, эквивалентная 1 сегменту в секунду
-    if (m_state.pacing_rate < tcb->m_segmentSize * 8) {
-        m_state.pacing_rate = tcb->m_segmentSize * 8;
-    }
-    tcb->m_pacingRate = DataRate(m_state.pacing_rate);
-    NS_LOG_DEBUG("pacing_rate = " << m_state.pacing_rate << " at time " << Simulator::Now().GetSeconds());
-    return m_state.pacing_rate;
-  }
 
     uint32_t SplineCcNew::cwnd_next_gain(Ptr<TcpSocketState> tcb)
     {
@@ -332,11 +334,13 @@ namespace ns3 {
         m_state.curr_cwnd = static_cast<uint32_t>(cwnd_gain * m_state.bw * tcb->m_minRtt.GetSeconds() / tcb->m_segmentSize);
         if (m_state.curr_cwnd > tcb->m_cWnd / tcb->m_segmentSize)
             m_state.curr_cwnd = tcb->m_cWnd.Get() / tcb->m_segmentSize;
+
         uint32_t MAX_CWND_SEGMENTS = m_state.fairness_rat * (m_state.bw - (m_state.bw * 14 >> 4)) * (tcb->m_minRtt.GetSeconds() ?
-            tcb->m_minRtt.GetSeconds() : 1);
+            tcb->m_minRtt.GetSeconds() : 1) * cwnd_gain;
+
+        MAX_CWND_SEGMENTS = MAX_CWND_SEGMENTS ? MAX_CWND_SEGMENTS : m_state.min_cwnd;
 
         m_state.curr_cwnd = std::max(m_state.curr_cwnd, MAX_CWND_SEGMENTS);
-        m_state.curr_cwnd = m_state.curr_cwnd;
         return m_state.curr_cwnd;
     }
 
@@ -428,9 +432,7 @@ namespace ns3 {
             return cwnd_next_gain(tcb);
         case MODE_DRAIN_PROBE:
             NS_LOG_INFO("MODE_DRAIN_PROBE");
-            drain_probe(tcb);
-            pacing_gain_rate(tcb);
-            return cwnd_next_gain(tcb);
+            return drain_probe(tcb);;
         default:
             NS_LOG_INFO("MODE_PROBE_BW (fallback)");
             prob_bw(tcb);
@@ -474,10 +476,10 @@ namespace ns3 {
             NS_LOG_INFO("CwndEvent: tcb is null");
             return;
         }
-        switch (event) 
+        switch (event)
         {
         case ns3::TcpSocketState::CA_EVENT_CWND_RESTART:
-            m_state.curr_cwnd = tcb->m_initialCWnd; 
+            m_state.curr_cwnd = tcb->m_initialCWnd;
             m_state.current_mode = MODE_START_PROBE;
             NS_LOG_INFO("CwndEvent: CA_EVENT_CWND_RESTART, entering MODE_START_PROBE, curr_cwnd = " << m_state.curr_cwnd);
             break;
