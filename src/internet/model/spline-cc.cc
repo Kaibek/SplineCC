@@ -50,18 +50,18 @@ namespace ns3 {
         NS_LOG_FUNCTION(this << tcb << curr_rtt << throughput << num_acks);
         if (!tcb || tcb->m_segmentSize == 0)
         {
-            NS_LOG_DEBUG("Invalid tcb or segmentSize=0, setting tcb->m_cWnd = " << tcb->m_cWnd);
             return;
         }
 
         m_state.min_cwnd = tcb->m_initialCWnd >> 3;
         m_state.min_cwnd = m_state.min_cwnd ? m_state.min_cwnd : 10U;
+
         __epsilone_rtt(tcb);
         m_state.bw = __bw(tcb);
         uint32_t cwnd_segments = probs(tcb);
+
         tcb->m_cWnd = cwnd_segments * tcb->m_segmentSize;
         m_state.curr_cwnd = cwnd_segments;
-        NS_LOG_DEBUG("probs(tcb) = " << cwnd_segments << ", tcb->m_cWnd = " << tcb->m_cWnd);
 
         if (m_state.last_max_cwnd < m_state.curr_cwnd)
         {
@@ -134,7 +134,6 @@ namespace ns3 {
         {
             m_state.bw = std::max(m_state.bw, static_cast<uint64_t>(tcb->m_initialCWnd));
         }
-        NS_LOG_DEBUG("Calculated bw = " << m_state.bw);
         return m_state.bw;
     }
 
@@ -147,7 +146,7 @@ namespace ns3 {
         }
         if (m_state.fairness_rat >= 2 || (tcb->m_bytesInFlight << 1) < m_state.curr_cwnd)
         {
-            m_state.curr_cwnd = m_state.curr_cwnd * 20 >> 4;
+            m_state.curr_cwnd = m_state.curr_cwnd * 17 >> 4;
             m_state.curr_cwnd = std::max(m_state.curr_cwnd, m_state.min_cwnd);
             return m_state.curr_cwnd;
         }
@@ -210,7 +209,7 @@ namespace ns3 {
         }
         if (m_state.fairness_rat >= 2 || (tcb->m_bytesInFlight << 1) < m_state.curr_cwnd)
         {
-            m_state.curr_cwnd = m_state.curr_cwnd * 20 >> 4;
+            m_state.curr_cwnd = m_state.curr_cwnd * 17 >> 4;
             m_state.curr_cwnd = std::max(m_state.curr_cwnd, m_state.min_cwnd);
             return m_state.curr_cwnd;
         }
@@ -229,7 +228,7 @@ namespace ns3 {
             m_state.curr_cwnd = m_state.curr_cwnd * 8 >> 4;
             if (m_state.curr_ack < m_state.last_ack * 3 >> 2)
             {
-                m_state.curr_cwnd = (tcb->m_cWnd.Get() / tcb->m_segmentSize) * 8 >> 4; // Переводим в сегменты
+                m_state.curr_cwnd = (tcb->m_cWnd.Get() / tcb->m_segmentSize) * 8 >> 4; 
             }
             m_state.curr_cwnd = std::max(m_state.curr_cwnd, m_state.min_cwnd);
             return m_state.curr_cwnd;
@@ -293,9 +292,12 @@ namespace ns3 {
             tcb->m_minRtt.GetSeconds() : 1);
 
         MAX_CWND_SEGMENTS = MAX_CWND_SEGMENTS ? MAX_CWND_SEGMENTS : m_state.min_cwnd;
-        m_state.curr_cwnd = std::max(m_state.curr_cwnd, MAX_CWND_SEGMENTS);
+        if((tcb->m_congState == TcpSocketState::CA_LOSS && m_state.curr_ack < m_state.last_ack) || m_state.curr_cwnd > tcb->m_bytesInFlight / tcb->m_segmentSize)
+            m_state.curr_cwnd = std::min(m_state.curr_cwnd, MAX_CWND_SEGMENTS);
 
-        NS_LOG_DEBUG("start_probe: m_state.curr_cwnd = " << m_state.curr_cwnd);
+        else
+            m_state.curr_cwnd = std::max(m_state.curr_cwnd, MAX_CWND_SEGMENTS);
+
         return m_state.curr_cwnd;
     }
 
@@ -316,11 +318,10 @@ namespace ns3 {
             m_state.pacing_rate = m_state.pacing_rate * 12 >> 4;
         }
         // Минимальная скорость, эквивалентная 1 сегменту в секунду
-        if (m_state.pacing_rate < tcb->m_segmentSize * 8) {
-            m_state.pacing_rate = tcb->m_segmentSize * 8;
+        if (m_state.pacing_rate < tcb->m_segmentSize) {
+            m_state.pacing_rate = tcb->m_segmentSize;
         }
         tcb->m_pacingRate = DataRate(m_state.pacing_rate);
-        NS_LOG_DEBUG("pacing_rate = " << m_state.pacing_rate << " at time " << Simulator::Now().GetSeconds());
         return m_state.pacing_rate;
     }
 
@@ -340,7 +341,12 @@ namespace ns3 {
 
         MAX_CWND_SEGMENTS = MAX_CWND_SEGMENTS ? MAX_CWND_SEGMENTS : m_state.min_cwnd;
 
-        m_state.curr_cwnd = std::max(m_state.curr_cwnd, MAX_CWND_SEGMENTS);
+        if (tcb->m_congState == TcpSocketState::CA_LOSS && m_state.curr_ack < m_state.last_ack)
+            m_state.curr_cwnd = std::min(m_state.curr_cwnd, MAX_CWND_SEGMENTS);
+
+        else
+            m_state.curr_cwnd = std::max(m_state.curr_cwnd, MAX_CWND_SEGMENTS);
+
         return m_state.curr_cwnd;
     }
 
@@ -359,21 +365,13 @@ namespace ns3 {
 
         if (!m_state.probe_mode)
         {
-            NS_LOG_INFO("Entering MODE_START_PROBE");
-            m_state.probe_mode = 1;
             m_state.current_mode = MODE_START_PROBE;
             m_state.curr_cwnd = start_probe(tcb);
-
-            if (m_state.curr_cwnd > tcb->m_bytesInFlight / tcb->m_segmentSize)
-                m_state.curr_cwnd = m_state.curr_cwnd * 10 >> 4;
-
-            NS_LOG_DEBUG("probs: MODE_START_PROBE, cwnd = " << m_state.curr_cwnd);
         }
 
         if ((tcb->m_bytesInFlight > m_state.curr_ack * tcb->m_segmentSize &&
             tcb->m_bytesInFlight > m_state.curr_cwnd) || tcb->m_lastAckedSackedBytes < tcb->m_segmentSize)
         {
-            NS_LOG_INFO("Entering MODE_DRAIN_PROBE due to high RTT");
             m_state.current_mode = MODE_DRAIN_PROBE;
         }
         else
@@ -388,7 +386,6 @@ namespace ns3 {
             {
                 m_state.epp_min_rtt = 0;
                 m_state.current_mode = MODE_PROBE_BW;
-                NS_LOG_INFO("Entering MODE_PROBE_BW due to new min RTT");
             }
             else
             {
@@ -445,7 +442,6 @@ namespace ns3 {
     {
         NS_LOG_FUNCTION(this << tcb << bytesInFlight);
         uint32_t ssthresh = std::max(m_state.curr_cwnd * 14 >> 4, 1U);
-        NS_LOG_DEBUG("GetSsThresh: ssthresh = " << ssthresh);
         return ssthresh;
     }
 
@@ -466,14 +462,12 @@ namespace ns3 {
 
         m_state.last_ack = m_state.curr_ack;
         m_state.curr_ack = segmentsAcked;
-        NS_LOG_DEBUG("PktsAcked: curr_rtt = " << m_state.curr_rtt << ", curr_ack = " << m_state.curr_ack);
     }
 
     void SplineCcNew::CwndEvent(Ptr<TcpSocketState> tcb, const ns3::TcpSocketState::TcpCAEvent_t event)
     {
         NS_LOG_FUNCTION(this << tcb << event);
         if (!tcb) {
-            NS_LOG_INFO("CwndEvent: tcb is null");
             return;
         }
         switch (event)
@@ -481,7 +475,6 @@ namespace ns3 {
         case ns3::TcpSocketState::CA_EVENT_CWND_RESTART:
             m_state.curr_cwnd = tcb->m_initialCWnd;
             m_state.current_mode = MODE_START_PROBE;
-            NS_LOG_INFO("CwndEvent: CA_EVENT_CWND_RESTART, entering MODE_START_PROBE, curr_cwnd = " << m_state.curr_cwnd);
             break;
         default:
             break;
@@ -497,7 +490,6 @@ namespace ns3 {
         m_state.curr_rtt = tcb->m_lastRtt.Get().GetSeconds();
         m_state.last_cwnd = m_state.curr_cwnd;
         m_state.curr_cwnd = tcb->m_cWnd.Get() / tcb->m_segmentSize; // Переводим в сегменты
-        NS_LOG_DEBUG("IncreaseWindow: curr_cwnd = " << m_state.curr_cwnd << ", tcb->m_cWnd = " << tcb->m_cWnd.Get());
 
         SplineCCAlgo(tcb, m_state.curr_rtt, m_state.throughput, segmentsAcked);
     }
@@ -514,3 +506,4 @@ namespace ns3 {
     }
 
 } // namespace ns3
+
