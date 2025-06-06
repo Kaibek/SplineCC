@@ -105,9 +105,11 @@ namespace ns3 {
         }
         else
         {
-            double numerator = static_cast<double>(m_state.curr_cwnd) * m_state.curr_cwnd * tcb->m_segmentSize;
-            double denominator = 2.0 * tcb->m_bytesInFlight * tcb->m_bytesInFlight;
-            m_state.fairness_rat = static_cast<uint32_t>(numerator / denominator + 1.0);
+            uint64_t numerator = static_cast<uint64_t>(m_state.curr_cwnd) * m_state.curr_cwnd * tcb->m_segmentSize;
+            uint64_t denominator = static_cast<uint64_t>(2) * tcb->m_bytesInFlight * tcb->m_bytesInFlight;
+
+            m_state.fairness_rat = static_cast<uint32_t>(numerator / denominator + 1);
+
         }
         if (m_state.throughput * 12 >> 4 > m_state.bw)
         {
@@ -228,7 +230,7 @@ namespace ns3 {
             m_state.curr_cwnd = m_state.curr_cwnd * 8 >> 4;
             if (m_state.curr_ack < m_state.last_ack * 3 >> 2)
             {
-                m_state.curr_cwnd = (tcb->m_cWnd.Get() / tcb->m_segmentSize) * 8 >> 4; 
+                m_state.curr_cwnd = (tcb->m_cWnd.Get() / tcb->m_segmentSize) * 8 >> 4; // Переводим в сегменты
             }
             m_state.curr_cwnd = std::max(m_state.curr_cwnd, m_state.min_cwnd);
             return m_state.curr_cwnd;
@@ -288,7 +290,7 @@ namespace ns3 {
         }
         m_state.curr_cwnd += tcb->m_lastAckedSackedBytes / tcb->m_segmentSize;
 
-        uint32_t MAX_CWND_SEGMENTS = m_state.fairness_rat * (m_state.bw - (m_state.bw * 14 >> 4)) * (tcb->m_minRtt.GetSeconds() ?
+        uint32_t MAX_CWND_SEGMENTS = m_state.fairness_rat * (m_state.bw - (m_state.bw * 13 >> 4)) * (tcb->m_minRtt.GetSeconds() ?
             tcb->m_minRtt.GetSeconds() : 1);
 
         MAX_CWND_SEGMENTS = MAX_CWND_SEGMENTS ? MAX_CWND_SEGMENTS : m_state.min_cwnd;
@@ -506,4 +508,3 @@ namespace ns3 {
     }
 
 } // namespace ns3
-
